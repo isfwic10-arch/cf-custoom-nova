@@ -1559,8 +1559,27 @@ export default {
 			} else {
 				try {
 					const kvPass = await env.KV.get('admin_pass');
-					if (kvPass) { adminPassword = kvPass; mitmonSismatMenahel = kvPass; zmanMitmonSismatMenahel = Date.now(); }
-					else { mitmonSismatMenahel = ''; zmanMitmonSismatMenahel = Date.now() - 55000; }
+		
+					if (kvPass) {
+						adminPassword = kvPass;
+						mitmonSismatMenahel = kvPass;
+						zmanMitmonSismatMenahel = Date.now();
+					} else {
+						mitmonSismatMenahel = '';
+						zmanMitmonSismatMenahel = Date.now() - 55000;
+					}
+				} catch (e) {}
+			}
+		
+			// اگر پسورد وجود نداشت، اولین بار به صورت خودکار ساخته شود
+			if (!adminPassword) {
+				try {
+					const setup = await ensureCustomAutoSetup(env, new URL(request.url).host);
+					if (setup) {
+						adminPassword = setup.password;
+						mitmonSismatMenahel = setup.password;
+						zmanMitmonSismatMenahel = Date.now();
+					}
 				} catch (e) {}
 			}
 		}
