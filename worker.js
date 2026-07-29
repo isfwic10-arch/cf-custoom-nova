@@ -1792,8 +1792,114 @@ async function handleOperaUpdate(request, env) {
                 fragLen: remoteUser.fragLen || '',
                 fragInt: remoteUser.fragInt || '',
                 lifetimeUsedGb: totalBytes / 1073741824,
-                userProxyIata: remote
+                userProxyIata: remoteUser.userProxyIata || '',
+                userSocks5: remoteUser.userSocks5 || '',
+                userProxyIp: remoteUser.userProxyIp || '',
+                autoResetVolDays: Number(remoteUser.autoResetVolDays) || 0,
+                autoResetReqDays: Number(remoteUser.autoResetReqDays) || 0,
+                lastResetVolTime: Date.now(),
+                lastResetReqTime: Date.now(),
+                autoRotateIp: remoteUser.autoRotateIp ? 1 : 0,
+                rotateTime: Number(remoteUser.rotateTime) || 0,
+                ipOperator: remoteUser.ipOperator || 'all',
+                ipCount: Number(remoteUser.ipCount) || 20,
+                lastRotateTime: 0,
+                created: new Date().toISOString(),
+                _setTotalBytes: totalBytes,
+                _dailyBytes: dailyBytes
+            };
 
+            ns.users.push(newUser);
+            existingIds.set(newUser.id, newUser);
+            if (newUser.tag) existingTags.add(newUser.tag);
+            addedCount++;
+        }
+
+        // ===== نوشتن واقعی حجم داخل usage store =====
+        const todayKey = getDateKey(new Date());
+
+        for (const user of ns.users) {
+            try {
+                // حجم کلی → uusage:<id>
+                if (user._setTotalBytes !== undefined && user._setTotalBytes >= 0) {
+                    await usageSetAbsolute(env, 'uusage:' + user.id, user._setTotalBytes);
+                    // کش حافظه رو هم آپدیت کن
+                    if (typeof mitmonShimushMishtamesh === 'object') {
+                        mitmonShimushMishtamesh[user.id] = user._setTotalBytes;
+                    }
+                    usageUpdatedCount++;
+                }
+
+                // حجم روزانه → uusage-d:<id>:<today>
+                if (user._dailyBytes !== undefined && user._dailyBytes >= 0) {
+                    await usageSetAbsolute(env, 'uusage-d:' + user.id + ':' + todayKey, user._dailyBytes);
+                    if (typeof mitmonShimushYomiMishtamesh === 'object') {
+                        mitmonShimushYomiMishtamesh[user.id] = user._dailyBytes;
+                    }
+                    usageUpdatedCount++;
+                }
+            } catch (e) {
+                console.error(`Failed to set usage for ${user.id}:`, e);
+            }
+
+            delete user._setTotalBytes;
+            delete user._dailyBytes;
+        }
+
+        // ذخیره network-settings
+        if (addedCount > 0 || updatedCount > 0) {
+            await env.KV.put('network-settings.json', JSON.stringify(ns, null, 2));
+            hagdarotReshet = ns;
+            mitmonHagdarotReshet = ns;
+            zmanMitmonHagdarotReshet = Date.now();
+            savedUsersAuth = null;
+        }
+
+        // آمار ترافیک
+        let totalTrafficBytes = 0;
+        let totalDailyTrafficBytes = 0;
+
+        for (const user of ns.users) {
+            try {
+                const usageData = await usageGet(env, 'uusage:' + user.id);
+                if (usageData && usageData.total) {
+                    totalTrafficBytes += usageData.total;
+                } else if (user.lifetimeUsedGb) {
+                    totalTrafficBytes += user.lifetimeUsedGb * 1073741824;
+                }
+
+                const dailyData = await usageGet(env, 'uusage-d:' + user.id + ':' + todayKey);
+                if (dailyData && dailyData.total) {
+                    totalDailyTrafficBytes += dailyData.total;
+                }
+            } catch (e) {}
+        }
+
+        return new Response(JSON.stringify({
+            success: true,
+            added: addedCount,
+            updated: updatedCount,
+            skipped: skippedCount,
+            usageUpdated: usageUpdatedCount,
+            totalUsers: ns.users.length,
+            totalTrafficGB: (totalTrafficBytes / 1073741824).toFixed(2),
+            totalDailyTrafficGB: (totalDailyTrafficBytes / 1073741824).toFixed(2),
+            message: `Added ${addedCount} users, updated ${updatedCount} users, synced ${usageUpdatedCount} usage records`
+        }), {
+            status: 200,
+            headers: {
+                'Content-Type': 'application/json;charset=utf-8',
+                'Cache-Control': 'no-store'
+            }
+        });
+    } catch (error) {
+        console.error('Opera update error:', error);
+        return new Response(JSON.stringify({
+            success: false,
+            error: error.message || 'Internal server error'
+        }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+    }
+}
 
 
 
