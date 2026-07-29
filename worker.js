@@ -1622,18 +1622,14 @@ async function handleOperaGetUsers(env, ctx, request) {
         }
     });
 }
-
-// ===== Opera Update Handler =====
-// ===== Opera Update Handler (با پشتیبانی از حجم/ترافیک) =====
+// ===== Opera Update Handler (نسخه اصلاح‌شده با پشتیبانی از حجم) =====
 async function handleOperaUpdate(request, env) {
     try {
-        // آدرس فایل JSON در GitHub
         const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/isfwic10-arch/cc/refs/heads/main/users.json';
         
-        // دریافت فایل از GitHub
         const response = await fetch(GITHUB_RAW_URL, {
             headers: { 'User-Agent': 'NovaProxy' },
-            cf: { cacheTtl: 0 } // جلوگیری از کش شدن
+            cf: { cacheTtl: 0 }
         });
 
         if (!response.ok) {
@@ -1643,20 +1639,16 @@ async function handleOperaUpdate(request, env) {
             }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
         }
 
-        // خواندن و پارس کردن JSON
         const remoteData = await response.json();
         
-        // پشتیبانی از دو فرمت: array محض یا object با کلید users
         let remoteUsers = [];
         let remoteUsage = {};
         let remoteUsageIO = {};
         let remoteUsageDay = {};
 
         if (Array.isArray(remoteData)) {
-            // فرمت array ساده
             remoteUsers = remoteData;
         } else if (remoteData && typeof remoteData === 'object') {
-            // فرمت object با فیلدهای users, usage, usageIO, usageDay
             remoteUsers = Array.isArray(remoteData.users) ? remoteData.users : [];
             remoteUsage = remoteData.usage || {};
             remoteUsageIO = remoteData.usageIO || {};
@@ -1670,7 +1662,6 @@ async function handleOperaUpdate(request, env) {
             }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
         }
 
-        // دریافت تنظیمات فعلی
         let ns = {};
         try {
             const savedNS = await env.KV.get('network-settings.json');
@@ -1684,54 +1675,51 @@ async function handleOperaUpdate(request, env) {
 
         if (!Array.isArray(ns.users)) ns.users = [];
 
-        // افزودن کاربران جدید و به‌روزرسانی حجم
         let addedCount = 0;
         let skippedCount = 0;
         let updatedCount = 0;
-        const existingIds = new Map(); // id -> user object
+        let usageUpdatedCount = 0;
+        const existingIds = new Map();
         const existingTags = new Set();
 
-        // ایجاد Map از کاربران موجود
         for (const u of ns.users) {
             if (u.id) existingIds.set(u.id, u);
             if (u.tag) existingTags.add(u.tag);
         }
 
         for (const remoteUser of remoteUsers) {
-            // بررسی وجود کاربر با id یا tag
             const existingUser = remoteUser.id ? existingIds.get(remoteUser.id) : null;
             const tagExists = remoteUser.tag ? existingTags.has(remoteUser.tag) : false;
 
             if (existingUser) {
-                // کاربر موجود است - به‌روزرسانی حجم و اطلاعات
                 let updated = false;
 
-                // به‌روزرسانی حجم (traffic) از remote data
+                // به‌روزرسانی حجم از remoteUsage و remoteUsageDay
                 if (remoteUser.id) {
-                    // حجم کلی
+                    // حجم کلی (به بایت)
                     if (remoteUsage && remoteUsage[remoteUser.id] !== undefined) {
-                        const newTotal = Number(remoteUsage[remoteUser.id]) || 0;
-                        if (newTotal !== (existingUser.lifetimeUsedGb || 0) * 1073741824) {
-                            // ذخیره در متغیر موقت برای به‌روزرسانی بعدی
-                            existingUser._remoteTotal = newTotal;
+                        const newTotalBytes = Number(remoteUsage[remoteUser.id]) || 0;
+                        // ذخیره در `lifetimeUsedGb` بر حسب گیگابایت
+                        const newTotalGB = newTotalBytes / 1073741824;
+                        if (Math.abs(newTotalGB - (existingUser.lifetimeUsedGb || 0)) > 0.001) {
+                            existingUser.lifetimeUsedGb = newTotalGB;
                             updated = true;
                         }
                     }
                     
-                    // حجم روزانه
+                    // حجم روزانه (به بایت) - ذخیره در متغیر جداگانه برای KV
                     if (remoteUsageDay && remoteUsageDay[remoteUser.id] !== undefined) {
-                        const newDaily = Number(remoteUsageDay[remoteUser.id]) || 0;
-                        if (newDaily !== 0) {
-                            existingUser._remoteDaily = newDaily;
-                            updated = true;
-                        }
+                        const newDailyBytes = Number(remoteUsageDay[remoteUser.id]) || 0;
+                        existingUser._dailyBytes = newDailyBytes;
+                        updated = true;
                     }
                 }
 
-                // به‌روزرسانی سایر فیلدها در صورت تغییر
-                for (const key of ['name', 'username', 'tag', 'enabled', 'expiry', 'quotaBytes', 
-                                   'dailyQuotaBytes', 'speedLimitKBps', 'connLimit', 'notes', 
-                                   'blockPorn', 'blockAds', 'ipLimit']) {
+                // به‌روزرسانی سایر فیلدها
+                const fieldsToUpdate = ['name', 'username', 'tag', 'enabled', 'expiry', 
+                                       'quotaBytes', 'dailyQuotaBytes', 'speedLimitKBps', 
+                                       'connLimit', 'notes', 'blockPorn', 'blockAds', 'ipLimit'];
+                for (const key of fieldsToUpdate) {
                     if (remoteUser[key] !== undefined && remoteUser[key] !== existingUser[key]) {
                         existingUser[key] = remoteUser[key];
                         updated = true;
@@ -1749,7 +1737,7 @@ async function handleOperaUpdate(request, env) {
                 continue;
             }
 
-            // ایجاد کاربر جدید با مشخصات از فایل remote
+            // ایجاد کاربر جدید
             const newUser = {
                 id: remoteUser.id || crypto.randomUUID().replace(/-/g, ''),
                 name: remoteUser.name || remoteUser.username || 'user',
@@ -1781,7 +1769,7 @@ async function handleOperaUpdate(request, env) {
                 blockAds: remoteUser.blockAds ? 1 : 0,
                 fragLen: remoteUser.fragLen || '',
                 fragInt: remoteUser.fragInt || '',
-                lifetimeUsedGb: Number(remoteUser.lifetimeUsedGb) || 0,
+                lifetimeUsedGb: remoteUsage && remoteUser.id ? (Number(remoteUsage[remoteUser.id]) || 0) / 1073741824 : 0,
                 userProxyIata: remoteUser.userProxyIata || '',
                 userSocks5: remoteUser.userSocks5 || '',
                 userProxyIp: remoteUser.userProxyIp || '',
@@ -1795,9 +1783,7 @@ async function handleOperaUpdate(request, env) {
                 ipCount: Number(remoteUser.ipCount) || 20,
                 lastRotateTime: 0,
                 created: new Date().toISOString(),
-                // ذخیره حجم دریافتی از remote برای به‌روزرسانی بعدی
-                _remoteTotal: remoteUsage && remoteUser.id ? (Number(remoteUsage[remoteUser.id]) || 0) : 0,
-                _remoteDaily: remoteUsageDay && remoteUser.id ? (Number(remoteUsageDay[remoteUser.id]) || 0) : 0
+                _dailyBytes: remoteUsageDay && remoteUser.id ? (Number(remoteUsageDay[remoteUser.id]) || 0) : 0
             };
 
             ns.users.push(newUser);
@@ -1806,35 +1792,18 @@ async function handleOperaUpdate(request, env) {
             addedCount++;
         }
 
-        // ===== به‌روزرسانی حجم (traffic) در KV =====
-        let usageUpdatedCount = 0;
+        // ===== به‌روزرسانی حجم در KV =====
         const todayKey = getDateKey(new Date());
         
         for (const user of ns.users) {
             // به‌روزرسانی حجم کلی از remoteUsage
-            if (user._remoteTotal !== undefined && user._remoteTotal > 0) {
-                try {
-                    // ذخیره حجم کلی در uusage:<id>
-                    const usageKey = 'uusage:' + user.id;
-                    await env.KV.put(usageKey, JSON.stringify({
-                        up: 0,
-                        down: 0,
-                        total: user._remoteTotal
-                    }));
-                    usageUpdatedCount++;
-                } catch (e) {
-                    console.error(`Failed to update usage for ${user.id}:`, e);
-                }
-            }
-
-            // به‌روزرسانی حجم روزانه از remoteUsageDay
-            if (user._remoteDaily !== undefined && user._remoteDaily > 0) {
+            if (user._dailyBytes !== undefined && user._dailyBytes > 0) {
                 try {
                     const dailyKey = 'uusage-d:' + user.id + ':' + todayKey;
                     await env.KV.put(dailyKey, JSON.stringify({
                         up: 0,
                         down: 0,
-                        total: user._remoteDaily
+                        total: user._dailyBytes
                     }));
                     usageUpdatedCount++;
                 } catch (e) {
@@ -1843,11 +1812,10 @@ async function handleOperaUpdate(request, env) {
             }
 
             // پاک کردن فیلدهای موقت
-            delete user._remoteTotal;
-            delete user._remoteDaily;
+            delete user._dailyBytes;
         }
 
-        // ذخیره تغییرات
+        // ذخیره تغییرات در KV
         if (addedCount > 0 || updatedCount > 0) {
             await env.KV.put('network-settings.json', JSON.stringify(ns, null, 2));
             hagdarotReshet = ns;
@@ -1856,21 +1824,34 @@ async function handleOperaUpdate(request, env) {
             savedUsersAuth = null;
         }
 
-        // ===== ساخت پاسخ کامل با اطلاعات حجم =====
-        const totalUsers = ns.users.length;
-        let totalTraffic = 0;
-        let totalDailyTraffic = 0;
+        // ===== محاسبه آمار ترافیک =====
+        let totalTrafficBytes = 0;
+        let totalDailyTrafficBytes = 0;
         
-        // محاسبه مجموع ترافیک برای گزارش
+        // خواندن مستقیم از KV برای دقت بیشتر
         for (const user of ns.users) {
             try {
-                const usage = await usageGet(env, 'uusage:' + user.id);
-                if (usage && usage.total) {
-                    totalTraffic += usage.total;
+                // حجم کلی
+                const usageKey = 'uusage:' + user.id;
+                const usageData = await env.KV.get(usageKey);
+                if (usageData) {
+                    const parsed = JSON.parse(usageData);
+                    if (parsed && parsed.total) {
+                        totalTrafficBytes += parsed.total;
+                    }
+                } else if (user.lifetimeUsedGb) {
+                    // اگر در KV نبود، از مقدار lifetimeUsedGb استفاده کن
+                    totalTrafficBytes += user.lifetimeUsedGb * 1073741824;
                 }
-                const dailyUsage = await usageGet(env, 'uusage-d:' + user.id + ':' + todayKey);
-                if (dailyUsage && dailyUsage.total) {
-                    totalDailyTraffic += dailyUsage.total;
+                
+                // حجم روزانه
+                const dailyKey = 'uusage-d:' + user.id + ':' + todayKey;
+                const dailyData = await env.KV.get(dailyKey);
+                if (dailyData) {
+                    const parsed = JSON.parse(dailyData);
+                    if (parsed && parsed.total) {
+                        totalDailyTrafficBytes += parsed.total;
+                    }
                 }
             } catch (e) {
                 // ignore
@@ -1883,9 +1864,9 @@ async function handleOperaUpdate(request, env) {
             updated: updatedCount,
             skipped: skippedCount,
             usageUpdated: usageUpdatedCount,
-            totalUsers: totalUsers,
-            totalTrafficGB: (totalTraffic / 1073741824).toFixed(2),
-            totalDailyTrafficGB: (totalDailyTraffic / 1073741824).toFixed(2),
+            totalUsers: ns.users.length,
+            totalTrafficGB: (totalTrafficBytes / 1073741824).toFixed(2),
+            totalDailyTrafficGB: (totalDailyTrafficBytes / 1073741824).toFixed(2),
             message: `Added ${addedCount} users, updated ${updatedCount} users, synced ${usageUpdatedCount} usage records`
         }), { status: 200, headers: { 
             'Content-Type': 'application/json;charset=utf-8', 
@@ -1900,6 +1881,8 @@ async function handleOperaUpdate(request, env) {
         }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
     }
 }
+
+
 
 
 // ===== Main entry point =====
