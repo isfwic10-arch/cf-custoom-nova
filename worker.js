@@ -1869,33 +1869,68 @@ async function handleOperaUpdate(request, env) {
         ns.users = nextUsers;
 
         // 3) نوشتن حجم‌ها
-        const todayKey = getDateKey(new Date());
-        for (const user of ns.users) {
-            try {
-                if (user._setTotalBytes !== undefined && user._setTotalBytes >= 0) {
-                    const up = user._setUp || 0;
-                    const down = user._setDown || 0;
-                    await usageSetAbsolute(env, 'uusage:' + user.id, user._setTotalBytes, up, down);
-                    if (typeof mitmonShimushMishtamesh === 'object') {
-                        mitmonShimushMishtamesh[user.id] = user._setTotalBytes;
-                    }
-                    usageUpdatedCount++;
-                }
-                if (user._dailyBytes !== undefined && user._dailyBytes >= 0) {
-                    await usageSetAbsolute(env, 'uusage-d:' + user.id + ':' + todayKey, user._dailyBytes);
-                    if (typeof mitmonShimushYomiMishtamesh === 'object') {
-                        mitmonShimushYomiMishtamesh[user.id] = user._dailyBytes;
-                    }
-                    usageUpdatedCount++;
-                }
-            } catch (e) {
-                console.error('Failed to set usage for ' + user.id + ':', e);
-            }
-            delete user._setTotalBytes;
-            delete user._dailyBytes;
-            delete user._setUp;
-            delete user._setDown;
-        }
+        // ===== نوشتن حجم — فقط seed برای یوزر جدید / یا اگر remote بزرگ‌تر باشد =====
+		const todayKey = getDateKey(new Date());
+		
+		for (const user of ns.users) {
+		    try {
+		        const usageKey = 'uusage:' + user.id;
+		        const dailyKey = 'uusage-d:' + user.id + ':' + todayKey;
+		
+		        // حجم کلی
+		        if (user._setTotalBytes !== undefined && user._setTotalBytes >= 0) {
+		            const remoteTotal = user._setTotalBytes;
+		            const up = user._setUp || 0;
+		            const down = user._setDown || 0;
+		
+		            let localTotal = 0;
+		            try {
+		                const cur = await usageGet(env, usageKey);
+		                localTotal = (cur && cur.total) || 0;
+		            } catch (e) {}
+		
+		            // فقط اگر هنوز چیزی ثبت نشده، یا remote واقعاً بیشتر است (import)
+		            // هرگز حجم محلیِ بیشتر را با عدد GitHub پایین نیاور
+		            if (localTotal <= 0 || remoteTotal > localTotal) {
+		                await usageSetAbsolute(env, usageKey, remoteTotal, up, down);
+		                if (typeof mitmonShimushMishtamesh === 'object') {
+		                    mitmonShimushMishtamesh[user.id] = remoteTotal;
+		                }
+		                usageUpdatedCount++;
+		            }
+		            // lifetimeUsedGb را با max هماهنگ کن
+		            const bestGB = Math.max(localTotal, remoteTotal) / 1073741824;
+		            if (Math.abs((user.lifetimeUsedGb || 0) - bestGB) > 0.001) {
+		                user.lifetimeUsedGb = bestGB;
+		            }
+		        }
+		
+		        // حجم روزانه — فقط seed، بازنویسی اجباری نکن
+		        if (user._dailyBytes !== undefined && user._dailyBytes >= 0) {
+		            const remoteDaily = user._dailyBytes;
+		            let localDaily = 0;
+		            try {
+		                const cur = await usageGet(env, dailyKey);
+		                localDaily = (cur && cur.total) || 0;
+		            } catch (e) {}
+		
+		            if (localDaily <= 0 || remoteDaily > localDaily) {
+		                await usageSetAbsolute(env, dailyKey, remoteDaily);
+		                if (typeof mitmonShimushYomiMishtamesh === 'object') {
+		                    mitmonShimushYomiMishtamesh[user.id] = Math.max(localDaily, remoteDaily);
+		                }
+		                usageUpdatedCount++;
+		            }
+		        }
+		    } catch (e) {
+		        console.error('Failed to set usage for ' + user.id + ':', e);
+		    }
+		
+		    delete user._setTotalBytes;
+		    delete user._dailyBytes;
+		    delete user._setUp;
+		    delete user._setDown;
+		}
 
         // همیشه ذخیره کن اگر هر تغییری بوده (حتی فقط usage یا delete)
         const anythingChanged = addedCount > 0 || updatedCount > 0 || deletedCount > 0 || usageUpdatedCount > 0;
