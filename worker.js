@@ -9407,7 +9407,7 @@ async function ensureCustomAutoSetup(env, host) {
 		limitDailyReq: 0,
 		notes: 'default auto user',
 		fp: '',
-		speedLimitKBps: 0,
+		speedLimitKBps: 1024,
 		connLimit: 3,
 		maxConfigs: null,
 		userPorts: null,
