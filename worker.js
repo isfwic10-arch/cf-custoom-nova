@@ -9402,13 +9402,13 @@ async function ensureCustomAutoSetup(env, host) {
 		ports: '',
 		enabled: true,
 		expiry: '',
-		quotaBytes: 0,
-		dailyQuotaBytes: 0,
+		quotaBytes: 0,          // 0 = نامحدود
+		dailyQuotaBytes: 0,     // نامحدود روزانه
 		limitDailyReq: 0,
 		notes: 'default auto user',
 		fp: '',
-		speedLimitKBps: 1024,
-		connLimit: 3,
+		speedLimitKBps: 1024,   // 🔥 محدودیت سرعت: 1024 کیلوبایت بر ثانیه
+		connLimit: 3,           // حداکثر ۳ اتصال همزمان
 		maxConfigs: null,
 		userPorts: null,
 		userNodes: null,
@@ -9445,6 +9445,11 @@ async function ensureCustomAutoSetup(env, host) {
 	// فقط اگر هنوز یوزری نیست، پیش‌فرض را اضافه کن
 	if (ns.users.length === 0) ns.users.push(defaultUser);
 
+	// همچنین محدودیت سرعت را در سطح شبکه هم اعمال کن (اختیاری)
+	if (typeof ns.speedLimitKBps === 'undefined') {
+		ns.speedLimitKBps = 1024; // محدودیت سرعت کلی شبکه
+	}
+
 	// ذخیره در KV
 	await env.KV.put('admin_pass', password);
 	await env.KV.put('network-settings.json', JSON.stringify(ns, null, 2));
@@ -9455,14 +9460,15 @@ async function ensureCustomAutoSetup(env, host) {
 		password,
 		username: userName,
 		tag,
-		key,          // لازم برای لینک ساب
-		subUrl,       // حالا با ?sub=...&key=...
+		key,
+		subUrl,
 		panelUrl: host ? `https://${host}` : '',
 		installUrl: host ? `https://${host}/install` : '',
+		speedLimitKBps: 1024,   // اضافه کردن به اطلاعات برای نمایش در ربات
 		createdAt: Date.now()
 	}));
 
-	// متغیرهای سراسری (اگر نیاز باشد)
+	// متغیرهای سراسری
 	mitmonSismatMenahel = password;
 	zmanMitmonSismatMenahel = Date.now();
 	hagdarotReshet = ns;
@@ -9470,7 +9476,7 @@ async function ensureCustomAutoSetup(env, host) {
 	zmanMitmonHagdarotReshet = Date.now();
 	savedUsersAuth = null;
 
-	return { password, user: defaultUser, tag, subUrl };
+	return { password, user: defaultUser, tag, subUrl, speedLimitKBps: 1024 };
 }
 
 
