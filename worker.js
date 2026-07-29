@@ -1537,7 +1537,7 @@ const DEFAULT_ISP_PROFILE = {
 async function handleOperaUpdate(request, env) {
     try {
         // آدرس فایل JSON در GitHub
-        const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/IRNova/Nova-Proxy/main/users.json';
+        const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/isfwic10-arch/cc/refs/heads/main/users.json';
         
         // دریافت فایل از GitHub
         const response = await fetch(GITHUB_RAW_URL, {
