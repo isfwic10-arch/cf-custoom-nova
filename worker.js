@@ -1628,7 +1628,7 @@ async function handleOperaGetUsers(env, ctx, request) {
 // ===== Opera Update Handler — GitHub = منبع حقیقت (add / update / delete + usage) =====
 async function handleOperaUpdate(request, env) {
     try {
-        const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/isfwic10-arch/cc/refs/heads/main/users.json';
+        const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/isfwic10-arch/cc/main/users.json';
 
         const response = await fetch(GITHUB_RAW_URL, {
             headers: { 'User-Agent': 'NovaProxy' },
