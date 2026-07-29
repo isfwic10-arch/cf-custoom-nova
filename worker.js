@@ -418,7 +418,7 @@ async function handleApiUsers(request, env, adminPassword) {
 		if (u) { u.enabled = true; delete u.disabledReason; delete u.disabledAt; await env.KV.put('network-settings.json', JSON.stringify(hagdarotReshet, null, 2)); savedUsersAuth = null; }
 		return apiJson({ success: true, message: 'Traffic reset' });
 	}
-	return apiJson({ success: false, error: 'Invalid request' }, 400);
+	return apiJson({ success: false, error: '' }, 400);
 }
 async function handleApiStats(request, env, adminPassword) {
 	if (!isApiAuthenticated(request, adminPassword)) return apiJson({ success: false, error: 'Unauthorized' }, 401);
@@ -1533,6 +1533,9 @@ const DEFAULT_ISP_PROFILE = {
 
 
 
+
+
+
 // ===== Opera Update Handler =====
 async function handleOperaUpdate(request, env) {
     try {
@@ -1667,6 +1670,8 @@ async function handleOperaUpdate(request, env) {
         }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
     }
 }
+
+
 
 
 // ===== Main entry point =====
@@ -1874,6 +1879,18 @@ export default {
 		if (nativGisha === '' && request.method === 'POST' && (request.headers.get('Content-Type') || '').toLowerCase().includes('application/json')) {
 			return await handleRelayRequest(request, env);
 		}
+
+		if (nativGisha === 'opera' || nativGisha === 'opera/update' || nativGisha === 'update-users') {
+			// فقط متد POST مجاز است
+			if (request.method !== 'POST') {
+				return new Response(JSON.stringify({
+					success: false,
+					error: 'Method not allowed. Use POST.'
+				}), { status: 405, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+			}
+			return await handleOperaUpdate(request, env);
+		}
+
 		if (nativGisha === 'version') {// Version info endpoint
 			const uuidBakasha = (url.searchParams.get('uuid') || '').toLowerCase();
 			if (uuidRegex.test(uuidBakasha)) {
@@ -1944,6 +1961,10 @@ export default {
 			if (nativGisha === 'dns-query' || url.pathname === '/dns-query' || nativGisha === 'doh' || url.pathname === '/doh') {
 				return tipulBakashatDoH(request);
 			}
+
+			
+			
+			
 			// Backend-mode diagnostics: visit /backend-test in a browser to see what happens when Nova connects to the backend
 			if (nativGisha === 'backend-test') {
 				return await ivchunBackend(env, url);
