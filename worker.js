@@ -1535,6 +1535,93 @@ const DEFAULT_ISP_PROFILE = {
 
 
 
+async function handleOperaGetUsers(env, ctx, request) {
+    let _ns = {};
+    try {
+        _ns = JSON.parse(await env.KV.get('network-settings.json') || '{}');
+    } catch (e) {}
+    
+    let regMU = !!_ns.multiUser;
+    let users = Array.isArray(_ns.users) ? _ns.users : [];
+    
+    // دریافت savedUsersAuth از KV یا هدرها
+    let savedUsersAuth = null;
+    let savedUsersAuthZman = 0;
+    
+    // اگر نیاز داری از هدر یا کوکی بخوانی
+    // const authHeader = request.headers.get('Authorization');
+    // if (authHeader) { ... }
+    
+    const usage = {};
+    const usageIO = {};
+    const usageDay = {};
+    const _today = getDateKey(new Date());
+    let _autoChanged = false;
+    
+    await Promise.all(users.filter(u => u && u.id).map(async u => {
+        try {
+            const c = await usageGet(env, 'uusage:' + u.id);
+            usage[u.id] = (c && c.total) || 0;
+            usageIO[u.id] = { up: (c && c.up) || 0, down: (c && c.down) || 0 };
+        } catch (e) {
+            usage[u.id] = 0;
+            usageIO[u.id] = { up: 0, down: 0 };
+        }
+        try {
+            const cd = await usageGet(env, 'uusage-d:' + u.id + ':' + _today);
+            usageDay[u.id] = (cd && cd.total) || 0;
+        } catch (e) {
+            usageDay[u.id] = 0;
+        }
+    }));
+    
+    for (const u of users) {
+        if (!u || !u.id) continue;
+        if (u.enabled !== false) {
+            let reason = null;
+            if (u.quotaBytes && usage[u.id] >= u.quotaBytes) reason = 'quota';
+            else if (u.dailyQuotaBytes && usageDay[u.id] >= u.dailyQuotaBytes) reason = 'daily-quota';
+            else if (u.expiry) {
+                const _t = Date.parse(u.expiry);
+                if (!isNaN(_t) && Date.now() > _t) reason = 'expired';
+            }
+            if (reason) {
+                u.enabled = false;
+                u.disabledReason = reason;
+                u.disabledAt = Date.now();
+                u.autoDisabled = true;
+                _autoChanged = true;
+                
+                try {
+                    const _tgTxt = await env.KV.get('tg.json');
+                    if (_tgTxt) {
+                        const _tgJ = JSON.parse(_tgTxt);
+                        if (_tgJ.BotToken && _tgJ.ChatID) {
+                            const _reasonText = reason === 'quota' ? 'ترافیک تمام شد' : reason === 'daily-quota' ? 'سقف روزانه تمام شد' : 'منقضی شده';
+                            const _aMsg = `🔴 <b>غیرفعال‌سازی خودکار کاربر</b>\n\n👤 <b>${u.name || u.username || u.id}</b>\n📝 دلیل: ${_reasonText}`;
+                            ctx.waitUntil(tgApi(_tgJ.BotToken, 'sendMessage', { chat_id: _tgJ.ChatID, parse_mode: 'HTML', text: _aMsg }).catch(() => {}));
+                        }
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+    
+    if (_autoChanged) {
+        try {
+            _ns.users = users;
+            await env.KV.put('network-settings.json', JSON.stringify(_ns, null, 2));
+        } catch (e) {}
+    }
+    
+    return new Response(JSON.stringify({ multiUser: regMU, users, usage, usageIO, usageDay }), {
+        status: 200,
+        headers: {
+            'Content-Type': 'application/json;charset=utf-8',
+            'Cache-Control': 'no-store'
+        }
+    });
+}
 
 // ===== Opera Update Handler =====
 async function handleOperaUpdate(request, env) {
@@ -1880,7 +1967,7 @@ export default {
 			return await handleRelayRequest(request, env);
 		}
 
-		if (nativGisha === 'opera' || nativGisha === 'opera/update' || nativGisha === 'update-users') {
+		if (nativGisha ==='opera/update') {
 			// فقط متد POST مجاز است
 			if (request.method !== 'POST') {
 				return new Response(JSON.stringify({
@@ -1889,6 +1976,10 @@ export default {
 				}), { status: 405, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
 			}
 			return await handleOperaUpdate(request, env);
+		}
+
+		if (nativGisha === 'opera/get_users') {
+		    return await handleOperaGetUsers(env, ctx, request);
 		}
 
 		if (nativGisha === 'version') {// Version info endpoint
