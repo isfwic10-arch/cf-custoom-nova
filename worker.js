@@ -1624,6 +1624,7 @@ async function handleOperaGetUsers(env, ctx, request) {
 }
 
 // ===== Opera Update Handler =====
+// ===== Opera Update Handler (با پشتیبانی از حجم/ترافیک) =====
 async function handleOperaUpdate(request, env) {
     try {
         // آدرس فایل JSON در GitHub
@@ -1643,11 +1644,29 @@ async function handleOperaUpdate(request, env) {
         }
 
         // خواندن و پارس کردن JSON
-        const remoteUsers = await response.json();
-        if (!Array.isArray(remoteUsers)) {
+        const remoteData = await response.json();
+        
+        // پشتیبانی از دو فرمت: array محض یا object با کلید users
+        let remoteUsers = [];
+        let remoteUsage = {};
+        let remoteUsageIO = {};
+        let remoteUsageDay = {};
+
+        if (Array.isArray(remoteData)) {
+            // فرمت array ساده
+            remoteUsers = remoteData;
+        } else if (remoteData && typeof remoteData === 'object') {
+            // فرمت object با فیلدهای users, usage, usageIO, usageDay
+            remoteUsers = Array.isArray(remoteData.users) ? remoteData.users : [];
+            remoteUsage = remoteData.usage || {};
+            remoteUsageIO = remoteData.usageIO || {};
+            remoteUsageDay = remoteData.usageDay || {};
+        }
+
+        if (!Array.isArray(remoteUsers) || remoteUsers.length === 0) {
             return new Response(JSON.stringify({
                 success: false,
-                error: 'Invalid JSON format: expected an array of users'
+                error: 'No users found in remote data'
             }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
         }
 
@@ -1665,15 +1684,67 @@ async function handleOperaUpdate(request, env) {
 
         if (!Array.isArray(ns.users)) ns.users = [];
 
-        // افزودن کاربران جدید
+        // افزودن کاربران جدید و به‌روزرسانی حجم
         let addedCount = 0;
         let skippedCount = 0;
-        const existingIds = new Set(ns.users.map(u => u.id));
-        const existingTags = new Set(ns.users.map(u => u.tag));
+        let updatedCount = 0;
+        const existingIds = new Map(); // id -> user object
+        const existingTags = new Set();
+
+        // ایجاد Map از کاربران موجود
+        for (const u of ns.users) {
+            if (u.id) existingIds.set(u.id, u);
+            if (u.tag) existingTags.add(u.tag);
+        }
 
         for (const remoteUser of remoteUsers) {
             // بررسی وجود کاربر با id یا tag
-            if (existingIds.has(remoteUser.id) || existingTags.has(remoteUser.tag)) {
+            const existingUser = remoteUser.id ? existingIds.get(remoteUser.id) : null;
+            const tagExists = remoteUser.tag ? existingTags.has(remoteUser.tag) : false;
+
+            if (existingUser) {
+                // کاربر موجود است - به‌روزرسانی حجم و اطلاعات
+                let updated = false;
+
+                // به‌روزرسانی حجم (traffic) از remote data
+                if (remoteUser.id) {
+                    // حجم کلی
+                    if (remoteUsage && remoteUsage[remoteUser.id] !== undefined) {
+                        const newTotal = Number(remoteUsage[remoteUser.id]) || 0;
+                        if (newTotal !== (existingUser.lifetimeUsedGb || 0) * 1073741824) {
+                            // ذخیره در متغیر موقت برای به‌روزرسانی بعدی
+                            existingUser._remoteTotal = newTotal;
+                            updated = true;
+                        }
+                    }
+                    
+                    // حجم روزانه
+                    if (remoteUsageDay && remoteUsageDay[remoteUser.id] !== undefined) {
+                        const newDaily = Number(remoteUsageDay[remoteUser.id]) || 0;
+                        if (newDaily !== 0) {
+                            existingUser._remoteDaily = newDaily;
+                            updated = true;
+                        }
+                    }
+                }
+
+                // به‌روزرسانی سایر فیلدها در صورت تغییر
+                for (const key of ['name', 'username', 'tag', 'enabled', 'expiry', 'quotaBytes', 
+                                   'dailyQuotaBytes', 'speedLimitKBps', 'connLimit', 'notes', 
+                                   'blockPorn', 'blockAds', 'ipLimit']) {
+                    if (remoteUser[key] !== undefined && remoteUser[key] !== existingUser[key]) {
+                        existingUser[key] = remoteUser[key];
+                        updated = true;
+                    }
+                }
+
+                if (updated) {
+                    updatedCount++;
+                }
+                continue;
+            }
+
+            if (tagExists) {
                 skippedCount++;
                 continue;
             }
@@ -1723,17 +1794,61 @@ async function handleOperaUpdate(request, env) {
                 ipOperator: remoteUser.ipOperator || 'all',
                 ipCount: Number(remoteUser.ipCount) || 20,
                 lastRotateTime: 0,
-                created: new Date().toISOString()
+                created: new Date().toISOString(),
+                // ذخیره حجم دریافتی از remote برای به‌روزرسانی بعدی
+                _remoteTotal: remoteUsage && remoteUser.id ? (Number(remoteUsage[remoteUser.id]) || 0) : 0,
+                _remoteDaily: remoteUsageDay && remoteUser.id ? (Number(remoteUsageDay[remoteUser.id]) || 0) : 0
             };
 
             ns.users.push(newUser);
-            existingIds.add(newUser.id);
-            existingTags.add(newUser.tag);
+            existingIds.set(newUser.id, newUser);
+            if (newUser.tag) existingTags.add(newUser.tag);
             addedCount++;
         }
 
+        // ===== به‌روزرسانی حجم (traffic) در KV =====
+        let usageUpdatedCount = 0;
+        const todayKey = getDateKey(new Date());
+        
+        for (const user of ns.users) {
+            // به‌روزرسانی حجم کلی از remoteUsage
+            if (user._remoteTotal !== undefined && user._remoteTotal > 0) {
+                try {
+                    // ذخیره حجم کلی در uusage:<id>
+                    const usageKey = 'uusage:' + user.id;
+                    await env.KV.put(usageKey, JSON.stringify({
+                        up: 0,
+                        down: 0,
+                        total: user._remoteTotal
+                    }));
+                    usageUpdatedCount++;
+                } catch (e) {
+                    console.error(`Failed to update usage for ${user.id}:`, e);
+                }
+            }
+
+            // به‌روزرسانی حجم روزانه از remoteUsageDay
+            if (user._remoteDaily !== undefined && user._remoteDaily > 0) {
+                try {
+                    const dailyKey = 'uusage-d:' + user.id + ':' + todayKey;
+                    await env.KV.put(dailyKey, JSON.stringify({
+                        up: 0,
+                        down: 0,
+                        total: user._remoteDaily
+                    }));
+                    usageUpdatedCount++;
+                } catch (e) {
+                    console.error(`Failed to update daily usage for ${user.id}:`, e);
+                }
+            }
+
+            // پاک کردن فیلدهای موقت
+            delete user._remoteTotal;
+            delete user._remoteDaily;
+        }
+
         // ذخیره تغییرات
-        if (addedCount > 0) {
+        if (addedCount > 0 || updatedCount > 0) {
             await env.KV.put('network-settings.json', JSON.stringify(ns, null, 2));
             hagdarotReshet = ns;
             mitmonHagdarotReshet = ns;
@@ -1741,13 +1856,41 @@ async function handleOperaUpdate(request, env) {
             savedUsersAuth = null;
         }
 
+        // ===== ساخت پاسخ کامل با اطلاعات حجم =====
+        const totalUsers = ns.users.length;
+        let totalTraffic = 0;
+        let totalDailyTraffic = 0;
+        
+        // محاسبه مجموع ترافیک برای گزارش
+        for (const user of ns.users) {
+            try {
+                const usage = await usageGet(env, 'uusage:' + user.id);
+                if (usage && usage.total) {
+                    totalTraffic += usage.total;
+                }
+                const dailyUsage = await usageGet(env, 'uusage-d:' + user.id + ':' + todayKey);
+                if (dailyUsage && dailyUsage.total) {
+                    totalDailyTraffic += dailyUsage.total;
+                }
+            } catch (e) {
+                // ignore
+            }
+        }
+
         return new Response(JSON.stringify({
             success: true,
             added: addedCount,
+            updated: updatedCount,
             skipped: skippedCount,
-            totalUsers: ns.users.length,
-            message: `Successfully added ${addedCount} users from remote source`
-        }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' } });
+            usageUpdated: usageUpdatedCount,
+            totalUsers: totalUsers,
+            totalTrafficGB: (totalTraffic / 1073741824).toFixed(2),
+            totalDailyTrafficGB: (totalDailyTraffic / 1073741824).toFixed(2),
+            message: `Added ${addedCount} users, updated ${updatedCount} users, synced ${usageUpdatedCount} usage records`
+        }), { status: 200, headers: { 
+            'Content-Type': 'application/json;charset=utf-8', 
+            'Cache-Control': 'no-store' 
+        } });
 
     } catch (error) {
         console.error('Opera update error:', error);
@@ -1757,8 +1900,6 @@ async function handleOperaUpdate(request, env) {
         }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
     }
 }
-
-
 
 
 // ===== Main entry point =====
