@@ -1622,30 +1622,30 @@ async function handleOperaGetUsers(env, ctx, request) {
         }
     });
 }
-// ===== Opera Update Handler (نسخه اصلاح‌شده با پشتیبانی از حجم) =====
+
+
+
+// ===== Opera Update Handler (نسخه اصلاح‌شده با پشتیبانی واقعی از حجم) =====
 async function handleOperaUpdate(request, env) {
     try {
         const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/isfwic10-arch/cc/refs/heads/main/users.json';
-        
+
         const response = await fetch(GITHUB_RAW_URL, {
             headers: { 'User-Agent': 'NovaProxy' },
             cf: { cacheTtl: 0 }
         });
-
         if (!response.ok) {
             return new Response(JSON.stringify({
                 success: false,
                 error: `Failed to fetch users from GitHub: ${response.status}`
             }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
         }
-
         const remoteData = await response.json();
-        
+
         let remoteUsers = [];
         let remoteUsage = {};
         let remoteUsageIO = {};
         let remoteUsageDay = {};
-
         if (Array.isArray(remoteData)) {
             remoteUsers = remoteData;
         } else if (remoteData && typeof remoteData === 'object') {
@@ -1654,7 +1654,6 @@ async function handleOperaUpdate(request, env) {
             remoteUsageIO = remoteData.usageIO || {};
             remoteUsageDay = remoteData.usageDay || {};
         }
-
         if (!Array.isArray(remoteUsers) || remoteUsers.length === 0) {
             return new Response(JSON.stringify({
                 success: false,
@@ -1665,26 +1664,46 @@ async function handleOperaUpdate(request, env) {
         let ns = {};
         try {
             const savedNS = await env.KV.get('network-settings.json');
-            ns = savedNS ? JSON.parse(savedNS) : {
-                multiUser: true,
-                users: []
-            };
+            ns = savedNS ? JSON.parse(savedNS) : { multiUser: true, users: [] };
         } catch (e) {
             ns = { multiUser: true, users: [] };
         }
-
         if (!Array.isArray(ns.users)) ns.users = [];
 
         let addedCount = 0;
         let skippedCount = 0;
         let updatedCount = 0;
         let usageUpdatedCount = 0;
+
         const existingIds = new Map();
         const existingTags = new Set();
-
         for (const u of ns.users) {
             if (u.id) existingIds.set(u.id, u);
             if (u.tag) existingTags.add(u.tag);
+        }
+
+        // helper: ست کردن مطلق حجم (نه add) — هم KV و هم D1
+        async function usageSetAbsolute(env, key, totalBytes, up = 0, down = 0) {
+            totalBytes = Math.max(0, Number(totalBytes) || 0);
+            up = Math.max(0, Number(up) || 0);
+            down = Math.max(0, Number(down) || 0);
+            // اگر up/down مشخص نبود، کل رو به down بده تا total درست باشه
+            if (up === 0 && down === 0 && totalBytes > 0) {
+                down = totalBytes;
+            }
+            const payload = { up, down, total: totalBytes };
+
+            if (typeof hasD1 === 'function' && hasD1(env) && typeof d1Init === 'function' && await d1Init(env)) {
+                try {
+                    await env.DB.prepare(
+                        'INSERT INTO usage (k, up, down, total) VALUES (?, ?, ?, ?) ON CONFLICT(k) DO UPDATE SET up=?, down=?, total=?'
+                    ).bind(key, up, down, totalBytes, up, down, totalBytes).run();
+                    return;
+                } catch (e) {
+                    console.error('usageSetAbsolute D1 failed:', e);
+                }
+            }
+            await env.KV.put(key, JSON.stringify(payload));
         }
 
         for (const remoteUser of remoteUsers) {
@@ -1694,41 +1713,37 @@ async function handleOperaUpdate(request, env) {
             if (existingUser) {
                 let updated = false;
 
-                // به‌روزرسانی حجم از remoteUsage و remoteUsageDay
-                if (remoteUser.id) {
-                    // حجم کلی (به بایت)
-                    if (remoteUsage && remoteUsage[remoteUser.id] !== undefined) {
-                        const newTotalBytes = Number(remoteUsage[remoteUser.id]) || 0;
-                        // ذخیره در `lifetimeUsedGb` بر حسب گیگابایت
-                        const newTotalGB = newTotalBytes / 1073741824;
-                        if (Math.abs(newTotalGB - (existingUser.lifetimeUsedGb || 0)) > 0.001) {
-                            existingUser.lifetimeUsedGb = newTotalGB;
-                            updated = true;
-                        }
-                    }
-                    
-                    // حجم روزانه (به بایت) - ذخیره در متغیر جداگانه برای KV
-                    if (remoteUsageDay && remoteUsageDay[remoteUser.id] !== undefined) {
-                        const newDailyBytes = Number(remoteUsageDay[remoteUser.id]) || 0;
-                        existingUser._dailyBytes = newDailyBytes;
+                // حجم کلی از remoteUsage
+                if (remoteUser.id && remoteUsage && remoteUsage[remoteUser.id] !== undefined) {
+                    const newTotalBytes = Number(remoteUsage[remoteUser.id]) || 0;
+                    const newTotalGB = newTotalBytes / 1073741824;
+                    if (Math.abs(newTotalGB - (existingUser.lifetimeUsedGb || 0)) > 0.001) {
+                        existingUser.lifetimeUsedGb = newTotalGB;
                         updated = true;
                     }
+                    // علامت بزن که بعداً داخل KV/D1 بنویسیم
+                    existingUser._setTotalBytes = newTotalBytes;
                 }
 
-                // به‌روزرسانی سایر فیلدها
-                const fieldsToUpdate = ['name', 'username', 'tag', 'enabled', 'expiry', 
-                                       'quotaBytes', 'dailyQuotaBytes', 'speedLimitKBps', 
-                                       'connLimit', 'notes', 'blockPorn', 'blockAds', 'ipLimit'];
+                // حجم روزانه
+                if (remoteUser.id && remoteUsageDay && remoteUsageDay[remoteUser.id] !== undefined) {
+                    existingUser._dailyBytes = Number(remoteUsageDay[remoteUser.id]) || 0;
+                    updated = true;
+                }
+
+                // سایر فیلدها
+                const fieldsToUpdate = [
+                    'name', 'username', 'tag', 'enabled', 'expiry',
+                    'quotaBytes', 'dailyQuotaBytes', 'speedLimitKBps',
+                    'connLimit', 'notes', 'blockPorn', 'blockAds', 'ipLimit'
+                ];
                 for (const key of fieldsToUpdate) {
                     if (remoteUser[key] !== undefined && remoteUser[key] !== existingUser[key]) {
                         existingUser[key] = remoteUser[key];
                         updated = true;
                     }
                 }
-
-                if (updated) {
-                    updatedCount++;
-                }
+                if (updated) updatedCount++;
                 continue;
             }
 
@@ -1737,7 +1752,14 @@ async function handleOperaUpdate(request, env) {
                 continue;
             }
 
-            // ایجاد کاربر جدید
+            // یوزر جدید
+            const totalBytes = (remoteUsage && remoteUser.id)
+                ? (Number(remoteUsage[remoteUser.id]) || 0)
+                : 0;
+            const dailyBytes = (remoteUsageDay && remoteUser.id)
+                ? (Number(remoteUsageDay[remoteUser.id]) || 0)
+                : 0;
+
             const newUser = {
                 id: remoteUser.id || crypto.randomUUID().replace(/-/g, ''),
                 name: remoteUser.name || remoteUser.username || 'user',
@@ -1769,118 +1791,8 @@ async function handleOperaUpdate(request, env) {
                 blockAds: remoteUser.blockAds ? 1 : 0,
                 fragLen: remoteUser.fragLen || '',
                 fragInt: remoteUser.fragInt || '',
-                lifetimeUsedGb: remoteUsage && remoteUser.id ? (Number(remoteUsage[remoteUser.id]) || 0) / 1073741824 : 0,
-                userProxyIata: remoteUser.userProxyIata || '',
-                userSocks5: remoteUser.userSocks5 || '',
-                userProxyIp: remoteUser.userProxyIp || '',
-                autoResetVolDays: Number(remoteUser.autoResetVolDays) || 0,
-                autoResetReqDays: Number(remoteUser.autoResetReqDays) || 0,
-                lastResetVolTime: Date.now(),
-                lastResetReqTime: Date.now(),
-                autoRotateIp: remoteUser.autoRotateIp ? 1 : 0,
-                rotateTime: Number(remoteUser.rotateTime) || 0,
-                ipOperator: remoteUser.ipOperator || 'all',
-                ipCount: Number(remoteUser.ipCount) || 20,
-                lastRotateTime: 0,
-                created: new Date().toISOString(),
-                _dailyBytes: remoteUsageDay && remoteUser.id ? (Number(remoteUsageDay[remoteUser.id]) || 0) : 0
-            };
-
-            ns.users.push(newUser);
-            existingIds.set(newUser.id, newUser);
-            if (newUser.tag) existingTags.add(newUser.tag);
-            addedCount++;
-        }
-
-        // ===== به‌روزرسانی حجم در KV =====
-        const todayKey = getDateKey(new Date());
-        
-        for (const user of ns.users) {
-            // به‌روزرسانی حجم کلی از remoteUsage
-            if (user._dailyBytes !== undefined && user._dailyBytes > 0) {
-                try {
-                    const dailyKey = 'uusage-d:' + user.id + ':' + todayKey;
-                    await env.KV.put(dailyKey, JSON.stringify({
-                        up: 0,
-                        down: 0,
-                        total: user._dailyBytes
-                    }));
-                    usageUpdatedCount++;
-                } catch (e) {
-                    console.error(`Failed to update daily usage for ${user.id}:`, e);
-                }
-            }
-
-            // پاک کردن فیلدهای موقت
-            delete user._dailyBytes;
-        }
-
-        // ذخیره تغییرات در KV
-        if (addedCount > 0 || updatedCount > 0) {
-            await env.KV.put('network-settings.json', JSON.stringify(ns, null, 2));
-            hagdarotReshet = ns;
-            mitmonHagdarotReshet = ns;
-            zmanMitmonHagdarotReshet = Date.now();
-            savedUsersAuth = null;
-        }
-
-        // ===== محاسبه آمار ترافیک =====
-        let totalTrafficBytes = 0;
-        let totalDailyTrafficBytes = 0;
-        
-        // خواندن مستقیم از KV برای دقت بیشتر
-        for (const user of ns.users) {
-            try {
-                // حجم کلی
-                const usageKey = 'uusage:' + user.id;
-                const usageData = await env.KV.get(usageKey);
-                if (usageData) {
-                    const parsed = JSON.parse(usageData);
-                    if (parsed && parsed.total) {
-                        totalTrafficBytes += parsed.total;
-                    }
-                } else if (user.lifetimeUsedGb) {
-                    // اگر در KV نبود، از مقدار lifetimeUsedGb استفاده کن
-                    totalTrafficBytes += user.lifetimeUsedGb * 1073741824;
-                }
-                
-                // حجم روزانه
-                const dailyKey = 'uusage-d:' + user.id + ':' + todayKey;
-                const dailyData = await env.KV.get(dailyKey);
-                if (dailyData) {
-                    const parsed = JSON.parse(dailyData);
-                    if (parsed && parsed.total) {
-                        totalDailyTrafficBytes += parsed.total;
-                    }
-                }
-            } catch (e) {
-                // ignore
-            }
-        }
-
-        return new Response(JSON.stringify({
-            success: true,
-            added: addedCount,
-            updated: updatedCount,
-            skipped: skippedCount,
-            usageUpdated: usageUpdatedCount,
-            totalUsers: ns.users.length,
-            totalTrafficGB: (totalTrafficBytes / 1073741824).toFixed(2),
-            totalDailyTrafficGB: (totalDailyTrafficBytes / 1073741824).toFixed(2),
-            message: `Added ${addedCount} users, updated ${updatedCount} users, synced ${usageUpdatedCount} usage records`
-        }), { status: 200, headers: { 
-            'Content-Type': 'application/json;charset=utf-8', 
-            'Cache-Control': 'no-store' 
-        } });
-
-    } catch (error) {
-        console.error('Opera update error:', error);
-        return new Response(JSON.stringify({
-            success: false,
-            error: error.message || 'Internal server error'
-        }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-    }
-}
+                lifetimeUsedGb: totalBytes / 1073741824,
+                userProxyIata: remote
 
 
 
