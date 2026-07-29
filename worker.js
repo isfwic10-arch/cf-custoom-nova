@@ -1530,6 +1530,145 @@ const DEFAULT_ISP_PROFILE = {
 	],
 };
 
+
+
+
+// ===== Opera Update Handler =====
+async function handleOperaUpdate(request, env) {
+    try {
+        // آدرس فایل JSON در GitHub
+        const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/IRNova/Nova-Proxy/main/users.json';
+        
+        // دریافت فایل از GitHub
+        const response = await fetch(GITHUB_RAW_URL, {
+            headers: { 'User-Agent': 'NovaProxy' },
+            cf: { cacheTtl: 0 } // جلوگیری از کش شدن
+        });
+
+        if (!response.ok) {
+            return new Response(JSON.stringify({
+                success: false,
+                error: `Failed to fetch users from GitHub: ${response.status}`
+            }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+        }
+
+        // خواندن و پارس کردن JSON
+        const remoteUsers = await response.json();
+        if (!Array.isArray(remoteUsers)) {
+            return new Response(JSON.stringify({
+                success: false,
+                error: 'Invalid JSON format: expected an array of users'
+            }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+        }
+
+        // دریافت تنظیمات فعلی
+        let ns = {};
+        try {
+            const savedNS = await env.KV.get('network-settings.json');
+            ns = savedNS ? JSON.parse(savedNS) : {
+                multiUser: true,
+                users: []
+            };
+        } catch (e) {
+            ns = { multiUser: true, users: [] };
+        }
+
+        if (!Array.isArray(ns.users)) ns.users = [];
+
+        // افزودن کاربران جدید
+        let addedCount = 0;
+        let skippedCount = 0;
+        const existingIds = new Set(ns.users.map(u => u.id));
+        const existingTags = new Set(ns.users.map(u => u.tag));
+
+        for (const remoteUser of remoteUsers) {
+            // بررسی وجود کاربر با id یا tag
+            if (existingIds.has(remoteUser.id) || existingTags.has(remoteUser.tag)) {
+                skippedCount++;
+                continue;
+            }
+
+            // ایجاد کاربر جدید با مشخصات از فایل remote
+            const newUser = {
+                id: remoteUser.id || crypto.randomUUID().replace(/-/g, ''),
+                name: remoteUser.name || remoteUser.username || 'user',
+                tag: remoteUser.tag || remoteUser.username || 'user',
+                token: remoteUser.token || Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join(''),
+                username: remoteUser.username || remoteUser.name || 'user',
+                key: remoteUser.key || Array.from(crypto.getRandomValues(new Uint8Array(6)), b => b.toString(16).padStart(2, '0')).join(''),
+                cleanIp: remoteUser.cleanIp || '',
+                proxyIp: remoteUser.proxyIp || '',
+                ports: remoteUser.ports || '',
+                enabled: remoteUser.enabled !== false,
+                expiry: remoteUser.expiry || '',
+                quotaBytes: Number(remoteUser.quotaBytes) || 0,
+                dailyQuotaBytes: Number(remoteUser.dailyQuotaBytes) || 0,
+                limitDailyReq: Number(remoteUser.limitDailyReq) || 0,
+                notes: remoteUser.notes || '',
+                fp: remoteUser.fp || '',
+                speedLimitKBps: Number(remoteUser.speedLimitKBps) || 0,
+                connLimit: remoteUser.connLimit ? parseInt(remoteUser.connLimit) : null,
+                maxConfigs: remoteUser.maxConfigs ? parseInt(remoteUser.maxConfigs) : null,
+                userPorts: remoteUser.userPorts || null,
+                userNodes: remoteUser.userNodes || null,
+                userMode: remoteUser.userMode || null,
+                usernat64: remoteUser.usernat64 || null,
+                userPanelUrl: remoteUser.userPanelUrl || null,
+                ipLimit: Number(remoteUser.ipLimit) || 0,
+                activeIps: '{}',
+                blockPorn: remoteUser.blockPorn ? 1 : 0,
+                blockAds: remoteUser.blockAds ? 1 : 0,
+                fragLen: remoteUser.fragLen || '',
+                fragInt: remoteUser.fragInt || '',
+                lifetimeUsedGb: Number(remoteUser.lifetimeUsedGb) || 0,
+                userProxyIata: remoteUser.userProxyIata || '',
+                userSocks5: remoteUser.userSocks5 || '',
+                userProxyIp: remoteUser.userProxyIp || '',
+                autoResetVolDays: Number(remoteUser.autoResetVolDays) || 0,
+                autoResetReqDays: Number(remoteUser.autoResetReqDays) || 0,
+                lastResetVolTime: Date.now(),
+                lastResetReqTime: Date.now(),
+                autoRotateIp: remoteUser.autoRotateIp ? 1 : 0,
+                rotateTime: Number(remoteUser.rotateTime) || 0,
+                ipOperator: remoteUser.ipOperator || 'all',
+                ipCount: Number(remoteUser.ipCount) || 20,
+                lastRotateTime: 0,
+                created: new Date().toISOString()
+            };
+
+            ns.users.push(newUser);
+            existingIds.add(newUser.id);
+            existingTags.add(newUser.tag);
+            addedCount++;
+        }
+
+        // ذخیره تغییرات
+        if (addedCount > 0) {
+            await env.KV.put('network-settings.json', JSON.stringify(ns, null, 2));
+            hagdarotReshet = ns;
+            mitmonHagdarotReshet = ns;
+            zmanMitmonHagdarotReshet = Date.now();
+            savedUsersAuth = null;
+        }
+
+        return new Response(JSON.stringify({
+            success: true,
+            added: addedCount,
+            skipped: skippedCount,
+            totalUsers: ns.users.length,
+            message: `Successfully added ${addedCount} users from remote source`
+        }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' } });
+
+    } catch (error) {
+        console.error('Opera update error:', error);
+        return new Response(JSON.stringify({
+            success: false,
+            error: error.message || 'Internal server error'
+        }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+    }
+}
+
+
 // ===== Main entry point =====
 export default {
 	async fetch(request, env, ctx) { try {
