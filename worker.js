@@ -9379,14 +9379,16 @@ async function ensureCustomAutoSetup(env, host) {
 	if (lock) return null;
 
 	const password = _randPass(16);
-	const subUrl = host
-		? `https://${host}/sub?sub=${encodeURIComponent(userName)}&key=${encodeURIComponent(key)}`
-		: '';
 	const userName = 'user_' + _randHex(3);
 	const tag = userName;
 	const newId = crypto.randomUUID().replace(/-/g, '');
 	const token = _randHex(16);
 	const key = _randHex(6);
+
+	// ساخت subUrl با userName و key
+	const subUrl = host
+		? `https://${host}/sub?sub=${encodeURIComponent(userName)}&key=${encodeURIComponent(key)}`
+		: '';
 
 	const defaultUser = {
 		id: newId,
@@ -9400,13 +9402,13 @@ async function ensureCustomAutoSetup(env, host) {
 		ports: '',
 		enabled: true,
 		expiry: '',
-		quotaBytes: 0,          // 0 = نامحدود
-		dailyQuotaBytes: 0,     // نامحدود روزانه
+		quotaBytes: 0,
+		dailyQuotaBytes: 0,
 		limitDailyReq: 0,
 		notes: 'default auto user',
 		fp: '',
 		speedLimitKBps: 0,
-		connLimit: 3,           // حداکثر ۳ اتصال همزمان
+		connLimit: 3,
 		maxConfigs: null,
 		userPorts: null,
 		userNodes: null,
@@ -9439,13 +9441,16 @@ async function ensureCustomAutoSetup(env, host) {
 	try { ns = JSON.parse(await env.KV.get('network-settings.json') || '{}'); } catch (e) {}
 	ns.multiUser = true;
 	if (!Array.isArray(ns.users)) ns.users = [];
+	
 	// فقط اگر هنوز یوزری نیست، پیش‌فرض را اضافه کن
 	if (ns.users.length === 0) ns.users.push(defaultUser);
 
+	// ذخیره در KV
 	await env.KV.put('admin_pass', password);
 	await env.KV.put('network-settings.json', JSON.stringify(ns, null, 2));
 	await env.KV.put('custom_setup_done', '1');
-	// برای ربات/نصب‌کننده: credentials را یک‌بار ذخیره کن تا بتوانی بخوانی
+	
+	// ذخیره اطلاعات کامل برای ربات
 	await env.KV.put('custom_setup_info', JSON.stringify({
 		password,
 		username: userName,
@@ -9457,6 +9462,7 @@ async function ensureCustomAutoSetup(env, host) {
 		createdAt: Date.now()
 	}));
 
+	// متغیرهای سراسری (اگر نیاز باشد)
 	mitmonSismatMenahel = password;
 	zmanMitmonSismatMenahel = Date.now();
 	hagdarotReshet = ns;
@@ -9464,9 +9470,8 @@ async function ensureCustomAutoSetup(env, host) {
 	zmanMitmonHagdarotReshet = Date.now();
 	savedUsersAuth = null;
 
-	return { password, user: defaultUser, tag };
+	return { password, user: defaultUser, tag, subUrl };
 }
-// ===== END CUSTOM AUTO-SETUP =====
 
 
 async function tipulAshafHatkana(request, env, url, adminPassword, encryptionKey, UA) {
