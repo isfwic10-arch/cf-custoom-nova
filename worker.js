@@ -9379,7 +9379,9 @@ async function ensureCustomAutoSetup(env, host) {
 	if (lock) return null;
 
 	const password = _randPass(16);
-
+	const subUrl = host
+		? `https://${host}/sub?sub=${encodeURIComponent(userName)}&key=${encodeURIComponent(key)}`
+		: '';
 	const userName = 'user_' + _randHex(3);
 	const tag = userName;
 	const newId = crypto.randomUUID().replace(/-/g, '');
@@ -9448,7 +9450,10 @@ async function ensureCustomAutoSetup(env, host) {
 		password,
 		username: userName,
 		tag,
-		subUrl: host ? `https://${host}/sub?u=${encodeURIComponent(tag)}` : '',
+		key,          // لازم برای لینک ساب
+		subUrl,       // حالا با ?sub=...&key=...
+		panelUrl: host ? `https://${host}` : '',
+		installUrl: host ? `https://${host}/install` : '',
 		createdAt: Date.now()
 	}));
 
