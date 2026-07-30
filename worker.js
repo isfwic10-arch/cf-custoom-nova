@@ -29,17 +29,16 @@ function hostMatchesProxyList(host) {
 	return lists.some(p => { try { return new RegExp(`^${String(p).trim().replace(/\*/g, '.*')}$`, 'i').test(host); } catch (e) { return false; } });
 }
 
-
 //page_url
 _globalEnv = {
-  PAGE_URL: "https://isfwic10-arch.github.io/nova-panel/main"
-};
+  PAGES_URL: "https://isfwic10-arch.github.io/nova-panel/main"
+};  // ← سمی‌کالن را بررسی کنید
 
 const PagesDafStati = 'https://nova-panel.github.io/';
 
 function panelOrigin(env) { 
   const e = env || _globalEnv; 
-  const u = e && (e.PAGES_URL || e.PAGE_URL);  // ✅ درست شد
+  const u = e && (e.PAGES_URL || e.PAGE_URL); 
   if (u && typeof u === 'string' && u.trim()) { 
     let x = u.trim(); 
     if (!/^https?:\/\//i.test(x)) x = 'https://' + x; 
@@ -49,9 +48,6 @@ function panelOrigin(env) {
 }
 
 const NOVA_FREE_NOTICE = 'سرویس حرفه ای MD5Pro ⚡';
-// Official Nova Telegram channel. LOCKED: this exact URL is injected into every
-// subscription and is NOT overridable from the panel, env, or KV, so a reseller can
-// never point the "channel" line anywhere but Nova's own channel.
 const NOVA_TG_CHANNEL = 'https://t.me/md5pro';
 // Public @handle derived from the channel, woven into every node name so a buyer of a
 // resold config can find the free source. Locked like the channel line above.
