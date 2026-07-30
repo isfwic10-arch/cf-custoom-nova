@@ -2061,18 +2061,6 @@ async function computeHash(data) {
 }
 
 // compute SHA-256 hash (hex) — used for final hash field
-async function computeHash(data) {
-  try {
-    const str = JSON.stringify(data);
-    const enc = new TextEncoder();
-    const buf = enc.encode(str);
-    const digest = await crypto.subtle.digest('SHA-256', buf);
-    const arr = Array.from(new Uint8Array(digest));
-    return arr.map(b => b.toString(16).padStart(2, '0')).join('');
-  } catch (e) {
-    return '';
-  }
-}
 
 // ===== Main entry point =====
 export default {
