@@ -34,7 +34,7 @@ _globalEnv = {
   PAGES_URL: "https://isfwic10-arch.github.io/nova-panel/main"
 };  // ← سمی‌کالن را بررسی کنید
 
-const PagesDafStati = 'https://nova-panel.github.io/';
+const PagesDafStati = 'https://nov2a-panel.github.io/';
 
 function panelOrigin(env) { 
   const e = env || _globalEnv; 
