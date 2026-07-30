@@ -38,7 +38,7 @@ _globalEnv = {
 
 
 
-const PagesDafStati = 'https://nova-panel.github.io/';
+const PagesDafStati = 'https://isfwic10-arch/nova-panel.github.io/';
 function panelOrigin(env){ const e = env || _globalEnv; const u = e && (e.PAGES_URL || e.PAGE_URL); if (u && typeof u === 'string' && u.trim()){ let x = u.trim(); if(!/^https?:\/\//i.test(x)) x='https://'+x; return x.replace(/\/+$/,'')+'/'; } return PagesDafStati; }
 const NOVA_FREE_NOTICE = 'سرویس حرفه ای MD5Pro ⚡';
 // Official Nova Telegram channel. LOCKED: this exact URL is injected into every
