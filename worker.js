@@ -32,8 +32,7 @@ function hostMatchesProxyList(host) {
 
 //page_url
 _globalEnv = {
-  PAGES_URL: "https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/main",
-  PAGE_URL: "https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/main"
+  PAGES_URL: "https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/main"
 };
 
 
@@ -1437,47 +1436,119 @@ async function tiudNefachMishtamesh(env, id, up, down, ctx) {
 	if (ctx && ctx.waitUntil) ctx.waitUntil(_ktv()); else await _ktv();  // ctx=null (flushUsage path): await so the caller's waitUntil covers the write; fire-and-forget here dropped per-user bytes on eviction
 }
 // User hub (serveUserHub): returns a friendly per-user HTML panel when a browser opens the subscription link.
+
 async function sherutMerkazMishtamesh(objMishtameshMinuy, env) {
-	try {
-		const base = String(panelOrigin(env) || '').replace(/\/+$/, '');
-		if (!base || /your-panel\.pages\.dev/i.test(base)) return null;
-		const r = await fetch(base + '/user/index.html', { headers: { 'User-Agent': 'NovaProxy' }, cf: { cacheTtl: 300, cacheEverything: true } });
-		if (!r || !r.ok) return null;
-		let html = await r.text();
-		if (!html || html.length < 50) return null;
-		if (objMishtameshMinuy) {
-			let totalBytes = 0, upBytes = 0, downBytes = 0;
-			try { const c = await usageGet(env, 'uusage:' + objMishtameshMinuy.id); if (c) { totalBytes = c.total || 0; upBytes = c.up || 0; downBytes = c.down || 0; } } catch (e) {}
-			const _today = getDateKey(new Date());
-			let dailyUp = 0, dailyDown = 0, dailyTotal = 0;
-			try { const cd = await usageGet(env, 'uusage-d:' + objMishtameshMinuy.id + ':' + _today); if (cd) { dailyUp = cd.up || 0; dailyDown = cd.down || 0; dailyTotal = cd.total || 0; } } catch (e) {}
-			let status = 'active';
-			const isExpired = objMishtameshMinuy.expiry ? (Date.now() > Date.parse(objMishtameshMinuy.expiry)) : false;
-			if (objMishtameshMinuy.enabled === false) status = 'disabled';
-			else if (isExpired) status = 'expired';
-			else if (objMishtameshMinuy.quotaBytes && totalBytes >= objMishtameshMinuy.quotaBytes) status = 'quota-exceeded';
-			else if (objMishtameshMinuy.dailyQuotaBytes && dailyTotal >= objMishtameshMinuy.dailyQuotaBytes) status = 'daily-quota-exceeded';
-			const expire = objMishtameshMinuy.expiry ? Math.floor(Date.parse(objMishtameshMinuy.expiry) / 1000) : 0;
-			const limitDailyReq = Number(objMishtameshMinuy.limitDailyReq) || 0;
-			const dailyReqCount = limitDailyReq > 0 ? (dailyTotal || 0) : 0;
-			const userData = {
-				id: objMishtameshMinuy.id, name: objMishtameshMinuy.name || '', tag: objMishtameshMinuy.tag || '',
-				username: objMishtameshMinuy.username || '', notes: objMishtameshMinuy.notes || '',
-				maxConfigs: Number(objMishtameshMinuy.maxConfigs) || 0,
-				userPanelUrl: objMishtameshMinuy.userPanelUrl || '',
-				expiry: objMishtameshMinuy.expiry || '', quotaBytes: Number(objMishtameshMinuy.quotaBytes) || 0,
-				dailyQuotaBytes: Number(objMishtameshMinuy.dailyQuotaBytes) || 0,
-				limitDailyReq: limitDailyReq, dailyReqCount: dailyReqCount,
-				proxyIata: objMishtameshMinuy.userProxyIata || '',
-				locationOn: !(hagdarotReshet && hagdarotReshet.userLocationEnabled === false),
-				status: status
-			};
-			const usageData = { up: upBytes, down: downBytes, total: totalBytes, dailyUp: dailyUp, dailyDown: dailyDown, dailyTotal: dailyTotal };
-			const injectScript = '<script>window.__NOVA_USER__=' + JSON.stringify(userData) + ';window.__NOVA_USAGE__=' + JSON.stringify(usageData) + ';</script>';
-			html = html.replace('</head>', injectScript + '</head>');
-		}
-		return new Response(html, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
-	} catch (e) { return null; }
+  try {
+    // گرفتن آدرس پایه و تمیز کردن آن
+    const base = String(panelOrigin(env) || '').replace(/\/+$/, '');
+    if (!base || /your-panel\.pages\.dev/i.test(base)) return null;
+    
+    // آدرس کامل فایل HTML
+    const url = base + '/user/index.html';
+    console.log('Fetching user panel from:', url); // برای دیباگ
+    
+    const r = await fetch(url, { 
+      headers: { 'User-Agent': 'NovaProxy' }, 
+      cf: { cacheTtl: 300, cacheEverything: true } 
+    });
+    
+    if (!r || !r.ok) {
+      console.error('Failed to fetch user panel:', r?.status);
+      return null;
+    }
+    
+    let html = await r.text();
+    if (!html || html.length < 50) {
+      console.error('HTML too short or empty');
+      return null;
+    }
+    
+    // اگر اطلاعات کاربر وجود دارد، تزریق کن
+    if (objMishtameshMinuy) {
+      let totalBytes = 0, upBytes = 0, downBytes = 0;
+      try { 
+        const c = await usageGet(env, 'uusage:' + objMishtameshMinuy.id); 
+        if (c) { 
+          totalBytes = c.total || 0; 
+          upBytes = c.up || 0; 
+          downBytes = c.down || 0; 
+        } 
+      } catch (e) {
+        console.warn('Error getting usage:', e);
+      }
+      
+      const _today = getDateKey(new Date());
+      let dailyUp = 0, dailyDown = 0, dailyTotal = 0;
+      try { 
+        const cd = await usageGet(env, 'uusage-d:' + objMishtameshMinuy.id + ':' + _today); 
+        if (cd) { 
+          dailyUp = cd.up || 0; 
+          dailyDown = cd.down || 0; 
+          dailyTotal = cd.total || 0; 
+        } 
+      } catch (e) {
+        console.warn('Error getting daily usage:', e);
+      }
+      
+      // تعیین وضعیت کاربر
+      let status = 'active';
+      const isExpired = objMishtameshMinuy.expiry ? (Date.now() > Date.parse(objMishtameshMinuy.expiry)) : false;
+      if (objMishtameshMinuy.enabled === false) status = 'disabled';
+      else if (isExpired) status = 'expired';
+      else if (objMishtameshMinuy.quotaBytes && totalBytes >= objMishtameshMinuy.quotaBytes) status = 'quota-exceeded';
+      else if (objMishtameshMinuy.dailyQuotaBytes && dailyTotal >= objMishtameshMinuy.dailyQuotaBytes) status = 'daily-quota-exceeded';
+      
+      const expire = objMishtameshMinuy.expiry ? Math.floor(Date.parse(objMishtameshMinuy.expiry) / 1000) : 0;
+      const limitDailyReq = Number(objMishtameshMinuy.limitDailyReq) || 0;
+      const dailyReqCount = limitDailyReq > 0 ? (dailyTotal || 0) : 0;
+      
+      // ساخت آبجکت اطلاعات کاربر
+      const userData = {
+        id: objMishtameshMinuy.id, 
+        name: objMishtameshMinuy.name || '', 
+        tag: objMishtameshMinuy.tag || '',
+        username: objMishtameshMinuy.username || '', 
+        notes: objMishtameshMinuy.notes || '',
+        maxConfigs: Number(objMishtameshMinuy.maxConfigs) || 0,
+        userPanelUrl: objMishtameshMinuy.userPanelUrl || '',
+        expiry: objMishtameshMinuy.expiry || '', 
+        quotaBytes: Number(objMishtameshMinuy.quotaBytes) || 0,
+        dailyQuotaBytes: Number(objMishtameshMinuy.dailyQuotaBytes) || 0,
+        limitDailyReq: limitDailyReq, 
+        dailyReqCount: dailyReqCount,
+        proxyIata: objMishtameshMinuy.userProxyIata || '',
+        locationOn: !(hagdarotReshet && hagdarotReshet.userLocationEnabled === false),
+        status: status
+      };
+      
+      const usageData = { 
+        up: upBytes, 
+        down: downBytes, 
+        total: totalBytes, 
+        dailyUp: dailyUp, 
+        dailyDown: dailyDown, 
+        dailyTotal: dailyTotal 
+      };
+      
+      // تزریق اسکریپت به HTML
+      const injectScript = '<script>window.__NOVA_USER__=' + JSON.stringify(userData) + ';window.__NOVA_USAGE__=' + JSON.stringify(usageData) + ';</script>';
+      html = html.replace('</head>', injectScript + '</head>');
+    }
+    
+    // برگرداندن Response
+    return new Response(html, { 
+      status: 200, 
+      headers: { 
+        'content-type': 'text/html; charset=utf-8', 
+        'Cache-Control': 'no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      } 
+    });
+    
+  } catch (e) {
+    console.error('Error in sherutMerkazMishtamesh:', e);
+    return null;
+  }
 }
 // ===== NAT64 support =====
 function isKtovetIPv4(s) { return /^(\d{1,3}\.){3}\d{1,3}$/.test(s); }
