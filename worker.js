@@ -28,10 +28,15 @@ function hostMatchesProxyList(host) {
 	const lists = connProxyWhitelist.length ? reshimaLevanaSocks5.concat(connProxyWhitelist) : reshimaLevanaSocks5;
 	return lists.some(p => { try { return new RegExp(`^${String(p).trim().replace(/\*/g, '.*')}$`, 'i').test(host); } catch (e) { return false; } });
 }
+
+
+//page_url
 _globalEnv = {
   PAGES_URL: "https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/main",
   PAGE_URL: "https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/main"
 }
+
+
 
 const PagesDafStati = 'https://nova-panel.github.io/';
 function panelOrigin(env){ const e = env || _globalEnv; const u = e && (e.PAGES_URL || e.PAGE_URL); if (u && typeof u === 'string' && u.trim()){ let x = u.trim(); if(!/^https?:\/\//i.test(x)) x='https://'+x; return x.replace(/\/+$/,'')+'/'; } return PagesDafStati; }
