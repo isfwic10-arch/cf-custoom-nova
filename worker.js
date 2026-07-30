@@ -32,7 +32,7 @@ function hostMatchesProxyList(host) {
 
 //page_url
 _globalEnv = {
-  PAGE_URL: "https://isfwic10-arch/nova-panel.github.io/main/"
+  PAGE_URL: "https://isfwic10-arch.github.io/nova-panel/main",
 };
 
 
