@@ -29,7 +29,7 @@ function hostMatchesProxyList(host) {
 	return lists.some(p => { try { return new RegExp(`^${String(p).trim().replace(/\*/g, '.*')}$`, 'i').test(host); } catch (e) { return false; } });
 }
 _globalEnv = {
-  PAGES_URL: "https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/main"
+  PAGES_URL: "https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/main",
   PAGE_URL: "https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/main"
 }
 
