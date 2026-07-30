@@ -31,20 +31,19 @@ function hostMatchesProxyList(host) {
 
 //page_url
 _globalEnv = {
-  PAGES_URL: "https://isfwic10-arch.github.io/nova-panel/main"
-};  // ← سمی‌کالن را بررسی کنید
+  PAGES_URL: "https://isfwic10-arch.github.io/nova-panel.github.io"
+};
+const PagesDafStati = 'https://isfwic10-arch.github.io/nova-panel.github.io/';
 
-const PagesDafStati = 'https://nov2a-panel.github.io/';
-
-function panelOrigin(env) { 
-  const e = env || _globalEnv; 
-  const u = e && (e.PAGES_URL || e.PAGE_URL); 
-  if (u && typeof u === 'string' && u.trim()) { 
-    let x = u.trim(); 
-    if (!/^https?:\/\//i.test(x)) x = 'https://' + x; 
-    return x.replace(/\/+$/, '') + '/'; 
-  } 
-  return PagesDafStati; 
+function panelOrigin(env) {
+  const e = env || _globalEnv;
+  const u = e && (e.PAGES_URL || e.PAGE_URL);
+  if (u && typeof u === 'string' && u.trim()) {
+    let x = u.trim();
+    if (!/^https?:\/\//i.test(x)) x = 'https://' + x;
+    return x.replace(/\/+$/, '') + '/';
+  }
+  return PagesDafStati;
 }
 
 const NOVA_FREE_NOTICE = 'سرویس حرفه ای MD5Pro ⚡';
