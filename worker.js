@@ -1625,363 +1625,314 @@ async function handleOperaGetUsers(env, ctx, request) {
 
 
 
-// ===== Opera Update Handler — GitHub = منبع حقیقت (add / update / delete + usage) =====
+// handleOperaUpdate: پذیرش payload از مادر (full_sync) — بدون وابستگی به GitHub
+// محیط: Cloudflare Worker (env.KV, اختیاری D1 در صورت وجود)
+// استفاده: جایگزین handleOperaUpdate فعلی کنید
+
 async function handleOperaUpdate(request, env) {
-    try {
-        const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/isfwic10-arch/cc/main/users.json';
-
-        const response = await fetch(GITHUB_RAW_URL, {
-            headers: { 'User-Agent': 'NovaProxy' },
-            cf: { cacheTtl: 0 }
-        });
-        if (!response.ok) {
-            return new Response(JSON.stringify({
-                success: false,
-                error: `Failed to fetch users from GitHub: ${response.status}`
-            }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-        }
-        const remoteData = await response.json();
-
-        let remoteUsers = [];
-        let remoteUsage = {};
-        let remoteUsageIO = {};
-        let remoteUsageDay = {};
-        if (Array.isArray(remoteData)) {
-            remoteUsers = remoteData;
-        } else if (remoteData && typeof remoteData === 'object') {
-            remoteUsers = Array.isArray(remoteData.users) ? remoteData.users : [];
-            remoteUsage = remoteData.usage || {};
-            remoteUsageIO = remoteData.usageIO || {};
-            remoteUsageDay = remoteData.usageDay || {};
-        }
-        if (!Array.isArray(remoteUsers) || remoteUsers.length === 0) {
-            return new Response(JSON.stringify({
-                success: false,
-                error: 'No users found in remote data'
-            }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
-        }
-
-        let ns = {};
-        try {
-            const savedNS = await env.KV.get('network-settings.json');
-            ns = savedNS ? JSON.parse(savedNS) : { multiUser: true, users: [] };
-        } catch (e) {
-            ns = { multiUser: true, users: [] };
-        }
-        if (!Array.isArray(ns.users)) ns.users = [];
-        ns.multiUser = true;
-
-        let addedCount = 0;
-        let updatedCount = 0;
-        let deletedCount = 0;
-        let usageUpdatedCount = 0;
-
-        // شناسه‌های معتبر از گیت‌هاب (منبع حقیقت)
-        const remoteById = new Map();
-        const remoteTags = new Set();
-        for (const ru of remoteUsers) {
-            if (!ru) continue;
-            const id = ru.id || null;
-            if (id) remoteById.set(String(id), ru);
-            if (ru.tag) remoteTags.add(String(ru.tag));
-        }
-
-        // helper: ست مطلق حجم (KV + D1)
-        async function usageSetAbsolute(env, key, totalBytes, up = 0, down = 0) {
-            totalBytes = Math.max(0, Number(totalBytes) || 0);
-            up = Math.max(0, Number(up) || 0);
-            down = Math.max(0, Number(down) || 0);
-            if (up === 0 && down === 0 && totalBytes > 0) down = totalBytes;
-            const payload = { up, down, total: totalBytes };
-
-            if (typeof hasD1 === 'function' && hasD1(env) && typeof d1Init === 'function' && await d1Init(env)) {
-                try {
-                    await env.DB.prepare(
-                        'INSERT INTO usage (k, up, down, total) VALUES (?, ?, ?, ?) ON CONFLICT(k) DO UPDATE SET up=?, down=?, total=?'
-                    ).bind(key, up, down, totalBytes, up, down, totalBytes).run();
-                    return;
-                } catch (e) {
-                    console.error('usageSetAbsolute D1 failed:', e);
-                }
-            }
-            await env.KV.put(key, JSON.stringify(payload));
-        }
-
-        // فیلدهایی که از گیت‌هاب روی یوزر پنل کپی می‌شوند
-        const SYNC_FIELDS = [
-            'name', 'username', 'tag', 'token', 'key', 'enabled', 'expiry',
-            'quotaBytes', 'dailyQuotaBytes', 'speedLimitKBps', 'connLimit',
-            'notes', 'blockPorn', 'blockAds', 'ipLimit', 'cleanIp', 'proxyIp',
-            'ports', 'fp', 'limitDailyReq', 'maxConfigs', 'userPorts', 'userNodes',
-            'userMode', 'usernat64', 'userPanelUrl', 'userProxyIata', 'userSocks5',
-            'userProxyIp', 'autoResetVolDays', 'autoResetReqDays', 'autoRotateIp',
-            'rotateTime', 'ipOperator', 'ipCount', 'fragLen', 'fragInt'
-        ];
-
-        function applyRemoteFields(target, remote) {
-            let changed = false;
-            for (const key of SYNC_FIELDS) {
-                if (remote[key] === undefined) continue;
-                let val = remote[key];
-                // نرمال‌سازی اعداد/بولین
-                if (['quotaBytes', 'dailyQuotaBytes', 'speedLimitKBps', 'ipLimit',
-                     'limitDailyReq', 'autoResetVolDays', 'autoResetReqDays',
-                     'rotateTime', 'ipCount'].includes(key)) {
-                    val = Number(val) || 0;
-                } else if (['connLimit', 'maxConfigs'].includes(key)) {
-                    val = val ? parseInt(val) : null;
-                } else if (['blockPorn', 'blockAds', 'autoRotateIp'].includes(key)) {
-                    val = val ? 1 : 0;
-                } else if (key === 'enabled') {
-                    val = val !== false;
-                }
-                if (target[key] !== val) {
-                    target[key] = val;
-                    changed = true;
-                }
-            }
-            return changed;
-        }
-
-        const existingById = new Map();
-        for (const u of ns.users) {
-            if (u && u.id) existingById.set(String(u.id), u);
-        }
-
-        const nextUsers = [];
-        const processedIds = new Set();
-
-        // 1) یوزرهای موجود در گیت‌هاب → add یا update
-        for (const remoteUser of remoteUsers) {
-            if (!remoteUser) continue;
-            const rid = remoteUser.id ? String(remoteUser.id) : null;
-            if (!rid) continue; // بدون id از گیت‌هاب رد می‌کنیم
-            processedIds.add(rid);
-
-            const totalBytes = remoteUsage[rid] !== undefined ? (Number(remoteUsage[rid]) || 0) : null;
-            const dailyBytes = remoteUsageDay[rid] !== undefined ? (Number(remoteUsageDay[rid]) || 0) : null;
-            const io = remoteUsageIO[rid] || null;
-
-            let user = existingById.get(rid);
-
-            if (user) {
-                // آپدیت
-                let changed = applyRemoteFields(user, remoteUser);
-
-                if (totalBytes !== null) {
-                    const newGB = totalBytes / 1073741824;
-                    if (Math.abs(newGB - (user.lifetimeUsedGb || 0)) > 0.0001) {
-                        user.lifetimeUsedGb = newGB;
-                        changed = true;
-                    }
-                    user._setTotalBytes = totalBytes;
-                    if (io) {
-                        user._setUp = Number(io.up) || 0;
-                        user._setDown = Number(io.down) || 0;
-                    }
-                }
-                if (dailyBytes !== null) {
-                    user._dailyBytes = dailyBytes;
-                }
-
-                if (changed) updatedCount++;
-                nextUsers.push(user);
-            } else {
-                // یوزر جدید
-                const newUser = {
-                    id: rid,
-                    name: remoteUser.name || remoteUser.username || 'user',
-                    tag: remoteUser.tag || remoteUser.username || 'user',
-                    token: remoteUser.token || Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join(''),
-                    username: remoteUser.username || remoteUser.name || 'user',
-                    key: remoteUser.key || Array.from(crypto.getRandomValues(new Uint8Array(6)), b => b.toString(16).padStart(2, '0')).join(''),
-                    cleanIp: remoteUser.cleanIp || '',
-                    proxyIp: remoteUser.proxyIp || '',
-                    ports: remoteUser.ports || '',
-                    enabled: remoteUser.enabled !== false,
-                    expiry: remoteUser.expiry || '',
-                    quotaBytes: Number(remoteUser.quotaBytes) || 0,
-                    dailyQuotaBytes: Number(remoteUser.dailyQuotaBytes) || 0,
-                    limitDailyReq: Number(remoteUser.limitDailyReq) || 0,
-                    notes: remoteUser.notes || '',
-                    fp: remoteUser.fp || '',
-                    speedLimitKBps: Number(remoteUser.speedLimitKBps) || 0,
-                    connLimit: remoteUser.connLimit ? parseInt(remoteUser.connLimit) : null,
-                    maxConfigs: remoteUser.maxConfigs ? parseInt(remoteUser.maxConfigs) : null,
-                    userPorts: remoteUser.userPorts || null,
-                    userNodes: remoteUser.userNodes || null,
-                    userMode: remoteUser.userMode || null,
-                    usernat64: remoteUser.usernat64 || null,
-                    userPanelUrl: remoteUser.userPanelUrl || null,
-                    ipLimit: Number(remoteUser.ipLimit) || 0,
-                    activeIps: '{}',
-                    blockPorn: remoteUser.blockPorn ? 1 : 0,
-                    blockAds: remoteUser.blockAds ? 1 : 0,
-                    fragLen: remoteUser.fragLen || '',
-                    fragInt: remoteUser.fragInt || '',
-                    lifetimeUsedGb: totalBytes !== null ? totalBytes / 1073741824 : 0,
-                    userProxyIata: remoteUser.userProxyIata || '',
-                    userSocks5: remoteUser.userSocks5 || '',
-                    userProxyIp: remoteUser.userProxyIp || '',
-                    autoResetVolDays: Number(remoteUser.autoResetVolDays) || 0,
-                    autoResetReqDays: Number(remoteUser.autoResetReqDays) || 0,
-                    lastResetVolTime: Date.now(),
-                    lastResetReqTime: Date.now(),
-                    autoRotateIp: remoteUser.autoRotateIp ? 1 : 0,
-                    rotateTime: Number(remoteUser.rotateTime) || 0,
-                    ipOperator: remoteUser.ipOperator || 'all',
-                    ipCount: Number(remoteUser.ipCount) || 20,
-                    lastRotateTime: 0,
-                    created: new Date().toISOString()
-                };
-                if (totalBytes !== null) {
-                    newUser._setTotalBytes = totalBytes;
-                    if (io) {
-                        newUser._setUp = Number(io.up) || 0;
-                        newUser._setDown = Number(io.down) || 0;
-                    }
-                }
-                if (dailyBytes !== null) newUser._dailyBytes = dailyBytes;
-
-                nextUsers.push(newUser);
-                addedCount++;
-            }
-        }
-
-        // 2) یوزرهایی که در پنل هستن ولی در گیت‌هاب نیستن → حذف
-        for (const u of ns.users) {
-            if (!u || !u.id) continue;
-            if (!processedIds.has(String(u.id))) {
-                deletedCount++;
-                // پاک کردن usageهای مرتبط (اختیاری ولی تمیزتر)
-                try {
-                    if (typeof usageReset === 'function') {
-                        await usageReset(env, 'uusage:' + u.id);
-                        const todayKey = getDateKey(new Date());
-                        await usageReset(env, 'uusage-d:' + u.id + ':' + todayKey);
-                    } else {
-                        await env.KV.delete('uusage:' + u.id);
-                    }
-                } catch (e) {}
-            }
-        }
-
-        ns.users = nextUsers;
-
-        // 3) نوشتن حجم‌ها
-        // ===== نوشتن حجم — فقط seed برای یوزر جدید / یا اگر remote بزرگ‌تر باشد =====
-		const todayKey = getDateKey(new Date());
-		
-		for (const user of ns.users) {
-		    try {
-		        const usageKey = 'uusage:' + user.id;
-		        const dailyKey = 'uusage-d:' + user.id + ':' + todayKey;
-		
-		        // حجم کلی
-		        if (user._setTotalBytes !== undefined && user._setTotalBytes >= 0) {
-		            const remoteTotal = user._setTotalBytes;
-		            const up = user._setUp || 0;
-		            const down = user._setDown || 0;
-		
-		            let localTotal = 0;
-		            try {
-		                const cur = await usageGet(env, usageKey);
-		                localTotal = (cur && cur.total) || 0;
-		            } catch (e) {}
-		
-		            // فقط اگر هنوز چیزی ثبت نشده، یا remote واقعاً بیشتر است (import)
-		            // هرگز حجم محلیِ بیشتر را با عدد GitHub پایین نیاور
-		            if (localTotal <= 0 || remoteTotal > localTotal) {
-		                await usageSetAbsolute(env, usageKey, remoteTotal, up, down);
-		                if (typeof mitmonShimushMishtamesh === 'object') {
-		                    mitmonShimushMishtamesh[user.id] = remoteTotal;
-		                }
-		                usageUpdatedCount++;
-		            }
-		            // lifetimeUsedGb را با max هماهنگ کن
-		            const bestGB = Math.max(localTotal, remoteTotal) / 1073741824;
-		            if (Math.abs((user.lifetimeUsedGb || 0) - bestGB) > 0.001) {
-		                user.lifetimeUsedGb = bestGB;
-		            }
-		        }
-		
-		        // حجم روزانه — فقط seed، بازنویسی اجباری نکن
-		        if (user._dailyBytes !== undefined && user._dailyBytes >= 0) {
-		            const remoteDaily = user._dailyBytes;
-		            let localDaily = 0;
-		            try {
-		                const cur = await usageGet(env, dailyKey);
-		                localDaily = (cur && cur.total) || 0;
-		            } catch (e) {}
-		
-		            if (localDaily <= 0 || remoteDaily > localDaily) {
-		                await usageSetAbsolute(env, dailyKey, remoteDaily);
-		                if (typeof mitmonShimushYomiMishtamesh === 'object') {
-		                    mitmonShimushYomiMishtamesh[user.id] = Math.max(localDaily, remoteDaily);
-		                }
-		                usageUpdatedCount++;
-		            }
-		        }
-		    } catch (e) {
-		        console.error('Failed to set usage for ' + user.id + ':', e);
-		    }
-		
-		    delete user._setTotalBytes;
-		    delete user._dailyBytes;
-		    delete user._setUp;
-		    delete user._setDown;
-		}
-
-        // همیشه ذخیره کن اگر هر تغییری بوده (حتی فقط usage یا delete)
-        const anythingChanged = addedCount > 0 || updatedCount > 0 || deletedCount > 0 || usageUpdatedCount > 0;
-        if (anythingChanged || true) { // همیشه ذخیره تا وضعیت پنل = گیت‌هاب بماند
-            await env.KV.put('network-settings.json', JSON.stringify(ns, null, 2));
-            hagdarotReshet = ns;
-            mitmonHagdarotReshet = ns;
-            zmanMitmonHagdarotReshet = Date.now();
-            savedUsersAuth = null;
-        }
-
-        // آمار
-        let totalTrafficBytes = 0;
-        let totalDailyTrafficBytes = 0;
-        for (const user of ns.users) {
-            try {
-                const usageData = await usageGet(env, 'uusage:' + user.id);
-                if (usageData && usageData.total) totalTrafficBytes += usageData.total;
-                else if (user.lifetimeUsedGb) totalTrafficBytes += user.lifetimeUsedGb * 1073741824;
-
-                const dailyData = await usageGet(env, 'uusage-d:' + user.id + ':' + todayKey);
-                if (dailyData && dailyData.total) totalDailyTrafficBytes += dailyData.total;
-            } catch (e) {}
-        }
-
-        return new Response(JSON.stringify({
-            success: true,
-            added: addedCount,
-            updated: updatedCount,
-            deleted: deletedCount,
-            usageUpdated: usageUpdatedCount,
-            totalUsers: ns.users.length,
-            totalTrafficGB: (totalTrafficBytes / 1073741824).toFixed(2),
-            totalDailyTrafficGB: (totalDailyTrafficBytes / 1073741824).toFixed(2),
-            message: `Added ${addedCount}, updated ${updatedCount}, deleted ${deletedCount}, usage synced ${usageUpdatedCount}`
-        }), {
-            status: 200,
-            headers: {
-                'Content-Type': 'application/json;charset=utf-8',
-                'Cache-Control': 'no-store'
-            }
-        });
-    } catch (error) {
-        console.error('Opera update error:', error);
-        return new Response(JSON.stringify({
-            success: false,
-            error: error.message || 'Internal server error'
-        }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+  try {
+    if (request.method !== 'POST') {
+      return new Response(JSON.stringify({ success: false, error: 'Method not allowed' }), { status: 405, headers: { 'Content-Type': 'application/json;charset=utf-8' }});
     }
+
+    // parse JSON body
+    let body = null;
+    try {
+      body = await request.json();
+    } catch (e) {
+      return new Response(JSON.stringify({ success: false, error: 'Invalid JSON body' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' }});
+    }
+
+    // Expect action 'full_sync' (backwards compat: accept 'sync' too) and a fullUsers array
+    const action = body.action || body.type || '';
+    if (!['full_sync', 'sync'].includes(action)) {
+      return new Response(JSON.stringify({ success: false, error: 'Unsupported action' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' }});
+    }
+
+    const incomingUsers = Array.isArray(body.fullUsers) ? body.fullUsers : [];
+    if (!Array.isArray(incomingUsers)) {
+      return new Response(JSON.stringify({ success: false, error: 'fullUsers must be an array' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' }});
+    }
+
+    // load current network-settings from KV (or initialize)
+    let ns = { multiUser: true, users: [] };
+    try {
+      const raw = await env.KV.get('network-settings.json');
+      if (raw) ns = JSON.parse(raw);
+    } catch (e) {
+      ns = { multiUser: true, users: [] };
+    }
+    if (!Array.isArray(ns.users)) ns.users = [];
+
+    // fields to sync from master -> child
+    const SYNC_FIELDS = [
+      'name','username','tag','token','key','enabled','expiry',
+      'quotaBytes','dailyQuotaBytes','speedLimitKBps','connLimit',
+      'notes','blockPorn','blockAds','ipLimit','cleanIp','proxyIp',
+      'ports','fp','limitDailyReq','maxConfigs','userPorts','userNodes',
+      'userMode','usernat64','userPanelUrl','userProxyIata','userSocks5',
+      'userProxyIp','autoResetVolDays','autoResetReqDays','autoRotateIp',
+      'rotateTime','ipOperator','ipCount','fragLen','fragInt'
+    ];
+
+    function applyRemoteFields(target, remote) {
+      let changed = false;
+      for (const key of SYNC_FIELDS) {
+        if (remote[key] === undefined) continue;
+        let val = remote[key];
+        // normalize some types
+        if (['quotaBytes','dailyQuotaBytes','speedLimitKBps','ipLimit','limitDailyReq','autoResetVolDays','autoResetReqDays','rotateTime','ipCount'].includes(key)) {
+          val = Number(val) || 0;
+        } else if (['connLimit','maxConfigs'].includes(key)) {
+          val = val ? parseInt(val) : null;
+        } else if (['blockPorn','blockAds','autoRotateIp'].includes(key)) {
+          val = val ? 1 : 0;
+        } else if (key === 'enabled') {
+          val = val !== false;
+        }
+        if (target[key] !== val) {
+          target[key] = val;
+          changed = true;
+        }
+      }
+      return changed;
+    }
+
+    // helper: usage KV get/set (simple fallback: KV only)
+    async function usageGet(env, key) {
+      try {
+        const raw = await env.KV.get(key);
+        if (!raw) return null;
+        try { return JSON.parse(raw); } catch { return null; }
+      } catch { return null; }
+    }
+    async function usageSetAbsolute(env, key, totalBytes, up = 0, down = 0) {
+      totalBytes = Math.max(0, Number(totalBytes) || 0);
+      up = Math.max(0, Number(up) || 0);
+      down = Math.max(0, Number(down) || 0);
+      const payload = { up, down, total: totalBytes };
+      try {
+        await env.KV.put(key, JSON.stringify(payload));
+      } catch (e) {
+        console.error('usageSetAbsolute KV failed:', e);
+      }
+    }
+    async function usageDelete(env, key) {
+      try { await env.KV.delete(key); } catch (e) {}
+    }
+    function getDateKey(d) {
+      const Y = d.getUTCFullYear();
+      const M = String(d.getUTCMonth()+1).padStart(2,'0');
+      const D = String(d.getUTCDate()).padStart(2,'0');
+      return `${Y}-${M}-${D}`;
+    }
+
+    // prepare maps
+    const existingById = new Map();
+    for (const u of ns.users) if (u && u.id) existingById.set(String(u.id), u);
+
+    const incomingById = new Map();
+    for (const iu of incomingUsers) {
+      if (!iu || !iu.id) continue;
+      incomingById.set(String(iu.id), iu);
+    }
+
+    let addedCount = 0, updatedCount = 0, deletedCount = 0, usageUpdatedCount = 0;
+
+    const nextUsers = [];
+
+    // 1) Add / Update based on incomingUsers
+    for (const iu of incomingUsers) {
+      if (!iu || !iu.id) continue;
+      const id = String(iu.id);
+      const existing = existingById.get(id);
+
+      if (existing) {
+        // update fields
+        const changed = applyRemoteFields(existing, iu);
+
+        // optional: if master provides lifetimeUsedGb or usedTraffic, sync usage KV conservatively:
+        // only seed local usage if local is absent or smaller than incoming
+        try {
+          const remoteTotalBytes = (iu._setTotalBytes !== undefined) ? Number(iu._setTotalBytes) :
+                                   (iu.lifetimeUsedGb !== undefined ? Number(iu.lifetimeUsedGb) * 1073741824 : undefined);
+          const remoteDaily = (iu._dailyBytes !== undefined) ? Number(iu._dailyBytes) :
+                              (iu.dailyUsedBytes !== undefined ? Number(iu.dailyUsedBytes) : undefined);
+
+          if (remoteTotalBytes !== undefined && !Number.isNaN(remoteTotalBytes)) {
+            const usageKey = 'uusage:' + id;
+            const cur = await usageGet(env, usageKey);
+            const localTotal = (cur && cur.total) ? Number(cur.total) : 0;
+            if (localTotal <= 0 || remoteTotalBytes > localTotal) {
+              const up = Number(iu._setUp || iu.up || 0);
+              const down = Number(iu._setDown || iu.down || 0);
+              await usageSetAbsolute(env, usageKey, remoteTotalBytes, up, down);
+              usageUpdatedCount++;
+            }
+            // reflect lifetimeUsedGb
+            existing.lifetimeUsedGb = Math.max(existing.lifetimeUsedGb||0, remoteTotalBytes/1073741824);
+          }
+
+          if (remoteDaily !== undefined && !Number.isNaN(remoteDaily)) {
+            const todayKey = getDateKey(new Date());
+            const dailyKey = 'uusage-d:' + id + ':' + todayKey;
+            const curD = await usageGet(env, dailyKey);
+            const localDaily = (curD && curD.total) ? Number(curD.total) : 0;
+            if (localDaily <= 0 || remoteDaily > localDaily) {
+              await usageSetAbsolute(env, dailyKey, remoteDaily, 0, 0);
+              usageUpdatedCount++;
+            }
+          }
+        } catch (e) {
+          console.error('usage sync failed for', id, e);
+        }
+
+        if (changed) updatedCount++;
+        nextUsers.push(existing);
+      } else {
+        // create minimal new user object based on incoming fields
+        const nu = {
+          id: String(iu.id),
+          name: iu.name || iu.username || iu.tag || 'user',
+          tag: iu.tag || iu.username || String(iu.id),
+          token: iu.token || iu.key || (typeof crypto !== 'undefined' ? Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2,'0')).join('') : ''),
+          username: iu.username || iu.name || '',
+          enabled: iu.enabled !== false,
+          expiry: iu.expiry || '',
+          quotaBytes: Number(iu.quotaBytes) || 0,
+          dailyQuotaBytes: Number(iu.dailyQuotaBytes) || 0,
+          speedLimitKBps: Number(iu.speedLimitKBps) || 0,
+          connLimit: iu.connLimit ? parseInt(iu.connLimit) : null,
+          notes: iu.notes || '',
+          blockPorn: iu.blockPorn ? 1 : 0,
+          blockAds: iu.blockAds ? 1 : 0,
+          ipLimit: Number(iu.ipLimit) || 0,
+          ports: iu.ports || '',
+          fp: iu.fp || '',
+          userProxyIata: iu.userProxyIata || '',
+          userSocks5: iu.userSocks5 || '',
+          lifetimeUsedGb: (iu.lifetimeUsedGb !== undefined) ? Number(iu.lifetimeUsedGb) : ((iu._setTotalBytes !== undefined) ? Number(iu._setTotalBytes)/1073741824 : 0),
+          created: (new Date()).toISOString()
+        };
+
+        // seed usage if provided and local is empty or smaller
+        try {
+          const remoteTotalBytes = (iu._setTotalBytes !== undefined) ? Number(iu._setTotalBytes) :
+                                   (iu.lifetimeUsedGb !== undefined ? Number(iu.lifetimeUsedGb) * 1073741824 : undefined);
+          if (remoteTotalBytes !== undefined && !Number.isNaN(remoteTotalBytes)) {
+            const usageKey = 'uusage:' + nu.id;
+            const cur = await usageGet(env, usageKey);
+            const localTotal = (cur && cur.total) ? Number(cur.total) : 0;
+            if (localTotal <= 0 || remoteTotalBytes > localTotal) {
+              const up = Number(iu._setUp || iu.up || 0);
+              const down = Number(iu._setDown || iu.down || 0);
+              await usageSetAbsolute(env, usageKey, remoteTotalBytes, up, down);
+              usageUpdatedCount++;
+            }
+          }
+          const remoteDaily = (iu._dailyBytes !== undefined) ? Number(iu._dailyBytes) :
+                              (iu.dailyUsedBytes !== undefined ? Number(iu.dailyUsedBytes) : undefined);
+          if (remoteDaily !== undefined && !Number.isNaN(remoteDaily)) {
+            const todayKey = getDateKey(new Date());
+            const dailyKey = 'uusage-d:' + nu.id + ':' + todayKey;
+            const curD = await usageGet(env, dailyKey);
+            const localDaily = (curD && curD.total) ? Number(curD.total) : 0;
+            if (localDaily <= 0 || remoteDaily > localDaily) {
+              await usageSetAbsolute(env, dailyKey, remoteDaily, 0, 0);
+              usageUpdatedCount++;
+            }
+          }
+        } catch (e) {
+          console.error('usage seed failed for new user', nu.id, e);
+        }
+
+        nextUsers.push(nu);
+        addedCount++;
+      }
+    }
+
+    // 2) Delete users that exist locally but are not in incoming list
+    const incomingIds = new Set(Array.from(incomingById.keys()));
+    for (const u of ns.users) {
+      if (!u || !u.id) continue;
+      const sid = String(u.id);
+      if (!incomingIds.has(sid)) {
+        // delete usage keys and skip adding to nextUsers
+        try {
+          await usageDelete(env, 'uusage:' + sid);
+          const todayKey = getDateKey(new Date());
+          await usageDelete(env, 'uusage-d:' + sid + ':' + todayKey);
+        } catch (e) { console.error('failed deleting usage for removed user', sid, e); }
+        deletedCount++;
+      }
+    }
+
+    // commit new users list
+    ns.multiUser = true;
+    ns.users = nextUsers;
+
+    // persist
+    try {
+      await env.KV.put('network-settings.json', JSON.stringify(ns, null, 2));
+    } catch (e) {
+      console.error('Failed to persist network-settings.json', e);
+      // but continue to respond success=false
+      return new Response(JSON.stringify({ success: false, error: 'Failed to persist settings' }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' }});
+    }
+
+    // compute total traffic stats
+    let totalTrafficBytes = 0;
+    let totalDailyTrafficBytes = 0;
+    const todayKey = getDateKey(new Date());
+    for (const u of ns.users) {
+      try {
+        const us = await usageGet(env, 'uusage:' + u.id);
+        const ub = us && us.total ? Number(us.total) : (u.lifetimeUsedGb ? Number(u.lifetimeUsedGb) * 1073741824 : 0);
+        totalTrafficBytes += ub || 0;
+
+        const ud = await usageGet(env, 'uusage-d:' + u.id + ':' + todayKey);
+        totalDailyTrafficBytes += (ud && ud.total) ? Number(ud.total) : 0;
+      } catch (e) {}
+    }
+
+    // compute final hash of saved ns.users for verification (optional)
+    const finalHash = await computeHash({ users: ns.users });
+
+    return new Response(JSON.stringify({
+      success: true,
+      added: addedCount,
+      updated: updatedCount,
+      deleted: deletedCount,
+      usageUpdated: usageUpdatedCount,
+      totalUsers: ns.users.length,
+      totalTrafficGB: (totalTrafficBytes / 1073741824).toFixed(2),
+      totalDailyTrafficGB: (totalDailyTrafficBytes / 1073741824).toFixed(2),
+      hash: finalHash,
+      message: `Added ${addedCount}, updated ${updatedCount}, deleted ${deletedCount}, usage synced ${usageUpdatedCount}`
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' }
+    });
+
+  } catch (error) {
+    console.error('Opera update error:', error);
+    return new Response(JSON.stringify({ success: false, error: (error && error.message) ? error.message : String(error) }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' }});
+  }
 }
 
+// compute SHA-256 hash (hex) — used for final hash field
+async function computeHash(data) {
+  try {
+    const str = JSON.stringify(data);
+    const enc = new TextEncoder();
+    const buf = enc.encode(str);
+    const digest = await crypto.subtle.digest('SHA-256', buf);
+    const arr = Array.from(new Uint8Array(digest));
+    return arr.map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    return '';
+  }
+}
 
 // ===== Main entry point =====
 export default {
