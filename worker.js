@@ -2059,9 +2059,6 @@ async function computeHash(data) {
     return '';
   }
 }
-
-// compute SHA-256 hash (hex) — used for final hash field
-
 // ===== Main entry point =====
 export default {
 	async fetch(request, env, ctx) { try {
