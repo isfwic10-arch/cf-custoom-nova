@@ -3581,39 +3581,113 @@ export default {
 						const subText = await subResponse.text();
 						return new Response(subText, { status: 200, headers: { 'Content-Type': 'text/plain;charset=utf-8', 'Cache-Control': 'no-store' } });
 					} else if (nativGisha === 'admin/users.json') { // multi-user registry (list) - includes daily usage
-						let _ns = {}; try { _ns = JSON.parse(await env.KV.get('network-settings.json') || '{}'); } catch (e) {}
-						let regMU = !!_ns.multiUser, users = Array.isArray(_ns.users) ? _ns.users : [];
-						if (savedUsersAuth && (Date.now() - savedUsersAuthZman) < 120000) { regMU = !!savedUsersAuth.multiUser; users = savedUsersAuth.users; }
-						const usage = {}, usageIO = {}, usageDay = {};
-						const _today = getDateKey(new Date());
-						let _autoChanged = false;
-						// Read all users' usage data in parallel (instead of serial awaits) for much faster multi-user responses
-						await Promise.all(users.filter(u => u && u.id).map(async u => {
-							try { const c = await usageGet(env, 'uusage:' + u.id); usage[u.id] = (c && c.total) || 0; usageIO[u.id] = { up: (c && c.up) || 0, down: (c && c.down) || 0 }; } catch (e) { usage[u.id] = 0; usageIO[u.id] = { up: 0, down: 0 }; }
-							try { const cd = await usageGet(env, 'uusage-d:' + u.id + ':' + _today); usageDay[u.id] = (cd && cd.total) || 0; } catch (e) { usageDay[u.id] = 0; }
-						}));
-						for (const u of users) {
-							if (!u || !u.id) continue;
-							if (u.enabled !== false) {
-								let reason = null;
-								if (u.quotaBytes && usage[u.id] >= u.quotaBytes) reason = 'quota';
-								else if (u.dailyQuotaBytes && usageDay[u.id] >= u.dailyQuotaBytes) reason = 'daily-quota';
-								else if (u.expiry) { const _t = Date.parse(u.expiry); if (!isNaN(_t) && Date.now() > _t) reason = 'expired'; }
-								if (reason) { u.enabled = false; u.disabledReason = reason; u.disabledAt = Date.now(); u.autoDisabled = true; _autoChanged = true;
-								// Auto-disable notification to Telegram
-								try {
-									const _tgTxt = await env.KV.get('tg.json');
-									if (_tgTxt) { const _tgJ = JSON.parse(_tgTxt); if (_tgJ.BotToken && _tgJ.ChatID) {
-										const _reasonText = reason === 'quota' ? 'ترافیک تمام شد' : reason === 'daily-quota' ? 'سقف روزانه تمام شد' : 'منقضی شده';
-										const _aMsg = `🔴 <b>غیرفعال‌سازی خودکار کاربر</b>\n\n👤 <b>${u.name || u.username || u.id}</b>\n📝 دلیل: ${_reasonText}`;
-										ctx.waitUntil(tgApi(_tgJ.BotToken, 'sendMessage', { chat_id: _tgJ.ChatID, parse_mode: 'HTML', text: _aMsg }).catch(() => {}));
-									}}
-								} catch (e) {}
-							}
-							}
-						}
-						if (_autoChanged) { try { _ns.users = users; await env.KV.put('network-settings.json', JSON.stringify(_ns, null, 2)); mitmonHagdarotReshet = null; savedUsersAuth = { multiUser: regMU, users }; savedUsersAuthZman = Date.now(); } catch (e) {} }
-						return new Response(JSON.stringify({ multiUser: regMU, users, usage, usageIO, usageDay }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' } });
+					  let _ns = {};
+					  try {
+					    _ns = JSON.parse((await env.KV.get('network-settings.json')) || '{}');
+					  } catch (e) {}
+					  let regMU = !!_ns.multiUser,
+					    users = Array.isArray(_ns.users) ? _ns.users : [];
+					  if (savedUsersAuth && Date.now() - savedUsersAuthZman < 120000) {
+					    regMU = !!savedUsersAuth.multiUser;
+					    users = savedUsersAuth.users;
+					  }
+					  const usage = {},
+					    usageIO = {},
+					    usageDay = {};
+					  const _today = getDateKey(new Date());
+					  let _autoChanged = false;
+					
+					  await Promise.all(
+					    users.filter((u) => u && u.id).map(async (u) => {
+					      const id = String(u.id);
+					      try {
+					        const c = await usageGet(env, 'uusage:' + id);
+					        let total = c && c.total != null ? Number(c.total) : 0;
+					        // اگر lifetime بزرگ‌تر است، همان را نشان بده (جلوگیری از صفر شدن بعد از overwrite)
+					        const lifeBytes =
+					          u.lifetimeUsedGb != null ? Number(u.lifetimeUsedGb) * 1073741824 : 0;
+					        if (lifeBytes > total) total = lifeBytes;
+					        usage[id] = total;
+					        usageIO[id] = { up: (c && c.up) || 0, down: (c && c.down) || 0 };
+					      } catch (e) {
+					        const lifeBytes =
+					          u.lifetimeUsedGb != null ? Number(u.lifetimeUsedGb) * 1073741824 : 0;
+					        usage[id] = lifeBytes;
+					        usageIO[id] = { up: 0, down: 0 };
+					      }
+					      try {
+					        const cd = await usageGet(env, 'uusage-d:' + id + ':' + _today);
+					        usageDay[id] = cd && cd.total != null ? Number(cd.total) : 0;
+					      } catch (e) {
+					        usageDay[id] = 0;
+					      }
+					    })
+					  );
+					
+					  for (const u of users) {
+					    if (!u || !u.id) continue;
+					    const id = String(u.id);
+					    if (u.enabled !== false) {
+					      let reason = null;
+					      if (u.quotaBytes && usage[id] >= u.quotaBytes) reason = 'quota';
+					      else if (u.dailyQuotaBytes && usageDay[id] >= u.dailyQuotaBytes)
+					        reason = 'daily-quota';
+					      else if (u.expiry) {
+					        const _t = Date.parse(u.expiry);
+					        if (!isNaN(_t) && Date.now() > _t) reason = 'expired';
+					      }
+					      if (reason) {
+					        u.enabled = false;
+					        u.disabledReason = reason;
+					        u.disabledAt = Date.now();
+					        u.autoDisabled = true;
+					        _autoChanged = true;
+					        try {
+					          const _tgTxt = await env.KV.get('tg.json');
+					          if (_tgTxt) {
+					            const _tgJ = JSON.parse(_tgTxt);
+					            if (_tgJ.BotToken && _tgJ.ChatID) {
+					              const _reasonText =
+					                reason === 'quota'
+					                  ? 'ترافیک تمام شد'
+					                  : reason === 'daily-quota'
+					                    ? 'سقف روزانه تمام شد'
+					                    : 'منقضی شده';
+					              const _aMsg = `🔴 <b>غیرفعال‌سازی خودکار کاربر</b>\n\n👤 <b>${u.name || u.username || u.id}</b>\n📝 دلیل: ${_reasonText}`;
+					              ctx.waitUntil(
+					                tgApi(_tgJ.BotToken, 'sendMessage', {
+					                  chat_id: _tgJ.ChatID,
+					                  parse_mode: 'HTML',
+					                  text: _aMsg,
+					                }).catch(() => {})
+					              );
+					            }
+					          }
+					        } catch (e) {}
+					      }
+					    }
+					  }
+					
+					  if (_autoChanged) {
+					    try {
+					      _ns.users = users;
+					      await env.KV.put('network-settings.json', JSON.stringify(_ns, null, 2));
+					      mitmonHagdarotReshet = null;
+					      savedUsersAuth = { multiUser: regMU, users };
+					      savedUsersAuthZman = Date.now();
+					    } catch (e) {}
+					  }
+					
+					  return new Response(
+					    JSON.stringify({ multiUser: regMU, users, usage, usageIO, usageDay }),
+					    {
+					      status: 200,
+					      headers: {
+					        'Content-Type': 'application/json;charset=utf-8',
+					        'Cache-Control': 'no-store',
+					      },
+					    }
+					  );
 					} else if (nativGisha === 'admin/central/stats') { // Fetch cluster stats from the central server
 						const { api, token } = await kabelCentralApi(env);
 						if (!api) return new Response(JSON.stringify({ configured: false }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' } });
