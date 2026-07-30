@@ -32,13 +32,22 @@ function hostMatchesProxyList(host) {
 
 //page_url
 _globalEnv = {
-  PAGE_URL: "https://isfwic10-arch.github.io/nova-panel/main",
+  PAGE_URL: "https://isfwic10-arch.github.io/nova-panel/main"
 };
 
-
-
 const PagesDafStati = 'https://nova-panel.github.io/';
-function panelOrigin(env){ const e = env || _globalEnv; const u = e && (e. || e.PAGE_URL); if (u && typeof u === 'string' && u.trim()){ let x = u.trim(); if(!/^https?:\/\//i.test(x)) x='https://'+x; return x.replace(/\/+$/,'')+'/'; } return PagesDafStati; }
+
+function panelOrigin(env) { 
+  const e = env || _globalEnv; 
+  const u = e && (e.PAGES_URL || e.PAGE_URL);  // ✅ درست شد
+  if (u && typeof u === 'string' && u.trim()) { 
+    let x = u.trim(); 
+    if (!/^https?:\/\//i.test(x)) x = 'https://' + x; 
+    return x.replace(/\/+$/, '') + '/'; 
+  } 
+  return PagesDafStati; 
+}
+
 const NOVA_FREE_NOTICE = 'سرویس حرفه ای MD5Pro ⚡';
 // Official Nova Telegram channel. LOCKED: this exact URL is injected into every
 // subscription and is NOT overridable from the panel, env, or KV, so a reseller can
