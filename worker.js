@@ -1621,91 +1621,113 @@ const DEFAULT_ISP_PROFILE = {
 
 
 async function handleOperaGetUsers(env, ctx, request) {
-    let _ns = {};
-    try {
-        _ns = JSON.parse(await env.KV.get('network-settings.json') || '{}');
-    } catch (e) {}
-    
-    let regMU = !!_ns.multiUser;
-    let users = Array.isArray(_ns.users) ? _ns.users : [];
-    
-    // دریافت savedUsersAuth از KV یا هدرها
-    let savedUsersAuth = null;
-    let savedUsersAuthZman = 0;
-    
-    // اگر نیاز داری از هدر یا کوکی بخوانی
-    // const authHeader = request.headers.get('Authorization');
-    // if (authHeader) { ... }
-    
-    const usage = {};
-    const usageIO = {};
-    const usageDay = {};
-    const _today = getDateKey(new Date());
-    let _autoChanged = false;
-    
-    await Promise.all(users.filter(u => u && u.id).map(async u => {
+  let _ns = {};
+  try {
+    _ns = JSON.parse((await env.KV.get('network-settings.json')) || '{}');
+  } catch (e) {}
+
+  let regMU = !!_ns.multiUser;
+  let users = Array.isArray(_ns.users) ? _ns.users : [];
+
+  const usage = {};
+  const usageIO = {};
+  const usageDay = {};
+  const _today = getDateKey(new Date());
+  let _autoChanged = false;
+
+  await Promise.all(
+    users.filter((u) => u && u.id).map(async (u) => {
+      const id = String(u.id);
+      try {
+        const c = await usageGet(env, 'uusage:' + id);
+        let total = c && c.total != null ? Number(c.total) : 0;
+        // اگر lifetime روی یوزر بزرگ‌تر است، همان را ملاک بگیر (جلوگیری از عدد کهنه)
+        const lifeBytes =
+          u.lifetimeUsedGb != null ? Number(u.lifetimeUsedGb) * 1073741824 : 0;
+        if (lifeBytes > total) total = lifeBytes;
+
+        usage[id] = total;
+        usageIO[id] = {
+          up: (c && c.up) || 0,
+          down: (c && c.down) || 0,
+        };
+      } catch (e) {
+        const lifeBytes =
+          u.lifetimeUsedGb != null ? Number(u.lifetimeUsedGb) * 1073741824 : 0;
+        usage[id] = lifeBytes;
+        usageIO[id] = { up: 0, down: 0 };
+      }
+      try {
+        const cd = await usageGet(env, 'uusage-d:' + id + ':' + _today);
+        usageDay[id] = cd && cd.total != null ? Number(cd.total) : 0;
+      } catch (e) {
+        usageDay[id] = 0;
+      }
+    })
+  );
+
+  for (const u of users) {
+    if (!u || !u.id) continue;
+    const id = String(u.id);
+    if (u.enabled !== false) {
+      let reason = null;
+      if (u.quotaBytes && usage[id] >= u.quotaBytes) reason = 'quota';
+      else if (u.dailyQuotaBytes && usageDay[id] >= u.dailyQuotaBytes)
+        reason = 'daily-quota';
+      else if (u.expiry) {
+        const _t = Date.parse(u.expiry);
+        if (!isNaN(_t) && Date.now() > _t) reason = 'expired';
+      }
+      if (reason) {
+        u.enabled = false;
+        u.disabledReason = reason;
+        u.disabledAt = Date.now();
+        u.autoDisabled = true;
+        _autoChanged = true;
+
         try {
-            const c = await usageGet(env, 'uusage:' + u.id);
-            usage[u.id] = (c && c.total) || 0;
-            usageIO[u.id] = { up: (c && c.up) || 0, down: (c && c.down) || 0 };
-        } catch (e) {
-            usage[u.id] = 0;
-            usageIO[u.id] = { up: 0, down: 0 };
-        }
-        try {
-            const cd = await usageGet(env, 'uusage-d:' + u.id + ':' + _today);
-            usageDay[u.id] = (cd && cd.total) || 0;
-        } catch (e) {
-            usageDay[u.id] = 0;
-        }
-    }));
-    
-    for (const u of users) {
-        if (!u || !u.id) continue;
-        if (u.enabled !== false) {
-            let reason = null;
-            if (u.quotaBytes && usage[u.id] >= u.quotaBytes) reason = 'quota';
-            else if (u.dailyQuotaBytes && usageDay[u.id] >= u.dailyQuotaBytes) reason = 'daily-quota';
-            else if (u.expiry) {
-                const _t = Date.parse(u.expiry);
-                if (!isNaN(_t) && Date.now() > _t) reason = 'expired';
+          const _tgTxt = await env.KV.get('tg.json');
+          if (_tgTxt) {
+            const _tgJ = JSON.parse(_tgTxt);
+            if (_tgJ.BotToken && _tgJ.ChatID) {
+              const _reasonText =
+                reason === 'quota'
+                  ? 'ترافیک تمام شد'
+                  : reason === 'daily-quota'
+                    ? 'سقف روزانه تمام شد'
+                    : 'منقضی شده';
+              const _aMsg = `🔴 <b>غیرفعال‌سازی خودکار کاربر</b>\n\n👤 <b>${u.name || u.username || u.id}</b>\n📝 دلیل: ${_reasonText}`;
+              ctx.waitUntil(
+                tgApi(_tgJ.BotToken, 'sendMessage', {
+                  chat_id: _tgJ.ChatID,
+                  parse_mode: 'HTML',
+                  text: _aMsg,
+                }).catch(() => {})
+              );
             }
-            if (reason) {
-                u.enabled = false;
-                u.disabledReason = reason;
-                u.disabledAt = Date.now();
-                u.autoDisabled = true;
-                _autoChanged = true;
-                
-                try {
-                    const _tgTxt = await env.KV.get('tg.json');
-                    if (_tgTxt) {
-                        const _tgJ = JSON.parse(_tgTxt);
-                        if (_tgJ.BotToken && _tgJ.ChatID) {
-                            const _reasonText = reason === 'quota' ? 'ترافیک تمام شد' : reason === 'daily-quota' ? 'سقف روزانه تمام شد' : 'منقضی شده';
-                            const _aMsg = `🔴 <b>غیرفعال‌سازی خودکار کاربر</b>\n\n👤 <b>${u.name || u.username || u.id}</b>\n📝 دلیل: ${_reasonText}`;
-                            ctx.waitUntil(tgApi(_tgJ.BotToken, 'sendMessage', { chat_id: _tgJ.ChatID, parse_mode: 'HTML', text: _aMsg }).catch(() => {}));
-                        }
-                    }
-                } catch (e) {}
-            }
-        }
-    }
-    
-    if (_autoChanged) {
-        try {
-            _ns.users = users;
-            await env.KV.put('network-settings.json', JSON.stringify(_ns, null, 2));
+          }
         } catch (e) {}
+      }
     }
-    
-    return new Response(JSON.stringify({ multiUser: regMU, users, usage, usageIO, usageDay }), {
-        status: 200,
-        headers: {
-            'Content-Type': 'application/json;charset=utf-8',
-            'Cache-Control': 'no-store'
-        }
-    });
+  }
+
+  if (_autoChanged) {
+    try {
+      _ns.users = users;
+      await env.KV.put('network-settings.json', JSON.stringify(_ns, null, 2));
+    } catch (e) {}
+  }
+
+  return new Response(
+    JSON.stringify({ multiUser: regMU, users, usage, usageIO, usageDay }),
+    {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json;charset=utf-8',
+        'Cache-Control': 'no-store',
+      },
+    }
+  );
 }
 
 
@@ -1748,6 +1770,12 @@ async function handleOperaUpdate(request, env) {
         headers: { 'Content-Type': 'application/json;charset=utf-8' },
       });
     }
+
+    // اگر از سمت سینک‌منیجر آمده، اجبار به ست کردن حجم
+    const forceUsage =
+      body.force === true ||
+      body.masterUpdate === true ||
+      body.masterSync === true;
 
     let ns = { multiUser: true, users: [] };
     try {
@@ -1799,19 +1827,15 @@ async function handleOperaUpdate(request, env) {
           changed = true;
         }
       }
-      // key و token را هم‌تراز نگه دار
       const k = String(target.key || target.token || '').trim();
       if (k) {
         if (target.key !== k) {
           target.key = k;
           changed = true;
         }
-        if (!target.token || target.token !== k) {
-          // اگر token جدا نداشت، از key پر کن (سازگاری ساب)
-          if (!target.token) {
-            target.token = k;
-            changed = true;
-          }
+        if (!target.token) {
+          target.token = k;
+          changed = true;
         }
       }
       if (!target.ipOperator) {
@@ -1833,7 +1857,6 @@ async function handleOperaUpdate(request, env) {
         name: iu.name || iu.username || iu.tag || 'user',
         tag: iu.tag || iu.username || id,
         username: iu.username || iu.name || '',
-        // حیاتی: key صریح
         key: keyVal,
         token: String(iu.token || keyVal || '').trim(),
         enabled: iu.enabled !== false,
@@ -1876,7 +1899,6 @@ async function handleOperaUpdate(request, env) {
               : 0,
         created: new Date().toISOString(),
       };
-      // اگر هنوز key خالی بود (نباید در سینک مادر پیش بیاید)
       if (!nu.key) {
         nu.key =
           typeof crypto !== 'undefined' && crypto.getRandomValues
@@ -1902,6 +1924,7 @@ async function handleOperaUpdate(request, env) {
         return null;
       }
     }
+
     async function usageSetAbsolute(env, key, totalBytes, up = 0, down = 0) {
       totalBytes = Math.max(0, Number(totalBytes) || 0);
       up = Math.max(0, Number(up) || 0);
@@ -1912,16 +1935,74 @@ async function handleOperaUpdate(request, env) {
         console.error('usageSetAbsolute KV failed:', e);
       }
     }
+
     async function usageDelete(env, key) {
       try {
         await env.KV.delete(key);
       } catch (e) {}
     }
+
     function getDateKey(d) {
       const Y = d.getUTCFullYear();
       const M = String(d.getUTCMonth() + 1).padStart(2, '0');
       const D = String(d.getUTCDate()).padStart(2, '0');
       return `${Y}-${M}-${D}`;
+    }
+
+    /** ست کردن حجم — در حالت force/master همیشه می‌نویسد */
+    async function applyUsage(id, iu, targetUser) {
+      let updated = 0;
+      const remoteTotalBytes =
+        iu._setTotalBytes !== undefined
+          ? Number(iu._setTotalBytes)
+          : iu.lifetimeUsedGb !== undefined
+            ? Number(iu.lifetimeUsedGb) * 1073741824
+            : undefined;
+
+      const remoteDaily =
+        iu._dailyBytes !== undefined
+          ? Number(iu._dailyBytes)
+          : iu.dailyUsedBytes !== undefined
+            ? Number(iu.dailyUsedBytes)
+            : undefined;
+
+      if (remoteTotalBytes !== undefined && !Number.isNaN(remoteTotalBytes)) {
+        const usageKey = 'uusage:' + id;
+        const cur = await usageGet(env, usageKey);
+        const localTotal = cur && cur.total != null ? Number(cur.total) : 0;
+
+        // force/master → همیشه بنویس | در غیر این صورت فقط اگر بزرگ‌تر یا صفر باشد
+        if (forceUsage || localTotal <= 0 || remoteTotalBytes > localTotal) {
+          await usageSetAbsolute(
+            env,
+            usageKey,
+            remoteTotalBytes,
+            Number(iu._setUp || iu.up || 0),
+            Number(iu._setDown || iu.down || 0)
+          );
+          updated++;
+        }
+
+        // lifetime همیشه هم‌تراز شود
+        const gb = remoteTotalBytes / 1073741824;
+        if (targetUser) {
+          targetUser.lifetimeUsedGb = forceUsage
+            ? gb
+            : Math.max(Number(targetUser.lifetimeUsedGb) || 0, gb);
+        }
+      }
+
+      if (remoteDaily !== undefined && !Number.isNaN(remoteDaily)) {
+        const dailyKey = 'uusage-d:' + id + ':' + getDateKey(new Date());
+        const curD = await usageGet(env, dailyKey);
+        const localDaily = curD && curD.total != null ? Number(curD.total) : 0;
+        if (forceUsage || localDaily <= 0 || remoteDaily > localDaily) {
+          await usageSetAbsolute(env, dailyKey, remoteDaily, 0, 0);
+          updated++;
+        }
+      }
+
+      return updated;
     }
 
     const existingById = new Map();
@@ -1947,47 +2028,7 @@ async function handleOperaUpdate(request, env) {
       if (existing) {
         const changed = applyRemoteFields(existing, iu);
         try {
-          const remoteTotalBytes =
-            iu._setTotalBytes !== undefined
-              ? Number(iu._setTotalBytes)
-              : iu.lifetimeUsedGb !== undefined
-                ? Number(iu.lifetimeUsedGb) * 1073741824
-                : undefined;
-          const remoteDaily =
-            iu._dailyBytes !== undefined
-              ? Number(iu._dailyBytes)
-              : iu.dailyUsedBytes !== undefined
-                ? Number(iu.dailyUsedBytes)
-                : undefined;
-
-          if (remoteTotalBytes !== undefined && !Number.isNaN(remoteTotalBytes)) {
-            const usageKey = 'uusage:' + id;
-            const cur = await usageGet(env, usageKey);
-            const localTotal = cur && cur.total ? Number(cur.total) : 0;
-            if (localTotal <= 0 || remoteTotalBytes > localTotal) {
-              await usageSetAbsolute(
-                env,
-                usageKey,
-                remoteTotalBytes,
-                Number(iu._setUp || iu.up || 0),
-                Number(iu._setDown || iu.down || 0)
-              );
-              usageUpdatedCount++;
-            }
-            existing.lifetimeUsedGb = Math.max(
-              existing.lifetimeUsedGb || 0,
-              remoteTotalBytes / 1073741824
-            );
-          }
-          if (remoteDaily !== undefined && !Number.isNaN(remoteDaily)) {
-            const dailyKey = 'uusage-d:' + id + ':' + getDateKey(new Date());
-            const curD = await usageGet(env, dailyKey);
-            const localDaily = curD && curD.total ? Number(curD.total) : 0;
-            if (localDaily <= 0 || remoteDaily > localDaily) {
-              await usageSetAbsolute(env, dailyKey, remoteDaily, 0, 0);
-              usageUpdatedCount++;
-            }
-          }
+          usageUpdatedCount += await applyUsage(id, iu, existing);
         } catch (e) {
           console.error('usage sync failed for', id, e);
         }
@@ -1996,42 +2037,7 @@ async function handleOperaUpdate(request, env) {
       } else {
         const nu = buildUserFromRemote(iu);
         try {
-          const remoteTotalBytes =
-            iu._setTotalBytes !== undefined
-              ? Number(iu._setTotalBytes)
-              : iu.lifetimeUsedGb !== undefined
-                ? Number(iu.lifetimeUsedGb) * 1073741824
-                : undefined;
-          if (remoteTotalBytes !== undefined && !Number.isNaN(remoteTotalBytes)) {
-            const usageKey = 'uusage:' + nu.id;
-            const cur = await usageGet(env, usageKey);
-            const localTotal = cur && cur.total ? Number(cur.total) : 0;
-            if (localTotal <= 0 || remoteTotalBytes > localTotal) {
-              await usageSetAbsolute(
-                env,
-                usageKey,
-                remoteTotalBytes,
-                Number(iu._setUp || iu.up || 0),
-                Number(iu._setDown || iu.down || 0)
-              );
-              usageUpdatedCount++;
-            }
-          }
-          const remoteDaily =
-            iu._dailyBytes !== undefined
-              ? Number(iu._dailyBytes)
-              : iu.dailyUsedBytes !== undefined
-                ? Number(iu.dailyUsedBytes)
-                : undefined;
-          if (remoteDaily !== undefined && !Number.isNaN(remoteDaily)) {
-            const dailyKey = 'uusage-d:' + nu.id + ':' + getDateKey(new Date());
-            const curD = await usageGet(env, dailyKey);
-            const localDaily = curD && curD.total ? Number(curD.total) : 0;
-            if (localDaily <= 0 || remoteDaily > localDaily) {
-              await usageSetAbsolute(env, dailyKey, remoteDaily, 0, 0);
-              usageUpdatedCount++;
-            }
-          }
+          usageUpdatedCount += await applyUsage(nu.id, iu, nu);
         } catch (e) {
           console.error('usage seed failed for new user', nu.id, e);
         }
@@ -2040,6 +2046,7 @@ async function handleOperaUpdate(request, env) {
       }
     }
 
+    // حذف کاربرانی که در لیست ورودی نیستند
     const incomingIds = new Set(Array.from(incomingById.keys()));
     for (const u of ns.users) {
       if (!u || !u.id) continue;
@@ -2068,14 +2075,18 @@ async function handleOperaUpdate(request, env) {
       });
     }
 
-    // کش‌های داخل حافظه پنل را باطل کن (اگر در اسکوپ هست)
+    // باطل کردن کش‌های حافظه
     try {
       if (typeof hagdarotReshet !== 'undefined') hagdarotReshet = ns;
       if (typeof mitmonHagdarotReshet !== 'undefined') mitmonHagdarotReshet = ns;
       if (typeof zmanMitmonHagdarotReshet !== 'undefined') zmanMitmonHagdarotReshet = Date.now();
       if (typeof savedUsersAuth !== 'undefined') savedUsersAuth = null;
+      // اگر شمارنده حجم در حافظه دارید، اینجا صفر/پاک کنید:
+      // if (typeof usageCache !== 'undefined') usageCache = {};
+      // if (typeof memUsage !== 'undefined') memUsage = {};
     } catch (e) {}
 
+    // محاسبه مجموع ترافیک از KV
     let totalTrafficBytes = 0;
     let totalDailyTrafficBytes = 0;
     const todayKey = getDateKey(new Date());
@@ -2083,14 +2094,14 @@ async function handleOperaUpdate(request, env) {
       try {
         const us = await usageGet(env, 'uusage:' + u.id);
         const ub =
-          us && us.total
+          us && us.total != null
             ? Number(us.total)
             : u.lifetimeUsedGb
               ? Number(u.lifetimeUsedGb) * 1073741824
               : 0;
         totalTrafficBytes += ub || 0;
         const ud = await usageGet(env, 'uusage-d:' + u.id + ':' + todayKey);
-        totalDailyTrafficBytes += ud && ud.total ? Number(ud.total) : 0;
+        totalDailyTrafficBytes += ud && ud.total != null ? Number(ud.total) : 0;
       } catch (e) {}
     }
 
@@ -2144,7 +2155,6 @@ async function computeHash(data) {
     return '';
   }
 }
-
 
 // ===== Main entry point =====
 export default {
