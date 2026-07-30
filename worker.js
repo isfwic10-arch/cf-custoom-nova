@@ -28,16 +28,21 @@ function hostMatchesProxyList(host) {
 	const lists = connProxyWhitelist.length ? reshimaLevanaSocks5.concat(connProxyWhitelist) : reshimaLevanaSocks5;
 	return lists.some(p => { try { return new RegExp(`^${String(p).trim().replace(/\*/g, '.*')}$`, 'i').test(host); } catch (e) { return false; } });
 }
+_globalEnv = {
+  PAGES_URL: "https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/main"
+  PAGE_URL: "https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/main"
+}
+
 const PagesDafStati = 'https://nova-panel.github.io/';
 function panelOrigin(env){ const e = env || _globalEnv; const u = e && (e.PAGES_URL || e.PAGE_URL); if (u && typeof u === 'string' && u.trim()){ let x = u.trim(); if(!/^https?:\/\//i.test(x)) x='https://'+x; return x.replace(/\/+$/,'')+'/'; } return PagesDafStati; }
-const NOVA_FREE_NOTICE = '🎁 نوا رایگان است، برای آن به کسی پول ندهید';
+const NOVA_FREE_NOTICE = 'سرویس حرفه ای MD5Pro ⚡';
 // Official Nova Telegram channel. LOCKED: this exact URL is injected into every
 // subscription and is NOT overridable from the panel, env, or KV, so a reseller can
 // never point the "channel" line anywhere but Nova's own channel.
-const NOVA_TG_CHANNEL = 'https://t.me/irnova_proxy';
+const NOVA_TG_CHANNEL = 'https://t.me/md5pro';
 // Public @handle derived from the channel, woven into every node name so a buyer of a
 // resold config can find the free source. Locked like the channel line above.
-const NOVA_TG_HANDLE = '@' + (String(NOVA_TG_CHANNEL).split('/').filter(Boolean).pop() || 'irnova_proxy');
+const NOVA_TG_HANDLE = '@' + (String(NOVA_TG_CHANNEL).split('/').filter(Boolean).pop() || 'md5pro');
 // Build stamp: bump this whenever worker.js changes so a deploy can be verified at a
 // glance (GET /install/status returns it). If the panel/status still shows an old build
 // after a deploy, the upload didn't take.
@@ -65,7 +70,7 @@ const bytesGrainYerida = 64 * 1024, safZanavGrainMorad = 512, milishniyotShkitat
 const haavaraMehira = false, haavaraMaks = false;
 let misparChiyugTcpMakbili = 4, preloadChiyugMerotz = false;
 const regexKtovetTzomet = /^(\[[\da-fA-F:]+\]|[\d.]+|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*)(?::(\d+))?(?:#(.+))?$/;
-const novaMachsanRaw = 'https://raw.githubusercontent.com/IRNova/Nova-Proxy/main';
+const novaMachsanRaw = 'https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/refs/heads/main';
 const urlGirsatNOVA = novaMachsanRaw + '/version.json';
 const NOVAWorkerSrcFallback = novaMachsanRaw + '/worker.js';
 const tikraTzometLecholMishtamesh = 150; // per-user node cap default (was 40, which truncated a large curated clean-IP list); override via network setting maxNodesPerUser
@@ -643,8 +648,8 @@ function relayJson(obj, status = 200) {
 	return new Response(JSON.stringify(obj), { status, headers: { 'content-type': 'application/json' } });
 }
 function getRelayHTML(actualHost) {
-	const logoUrl = 'https://raw.githubusercontent.com/IRNova/Nova-Proxy-App/main/logo.svg';
-	return `<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Nova Proxy Relay</title><link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700;900&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Vazirmatn',sans-serif;background:#fff;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px}.logo{width:120px;height:120px;border-radius:50%;object-fit:cover;animation:pulse 2s ease-in-out infinite;box-shadow:0 0 0 0 rgba(231,76,60,.4)}@keyframes pulse{0%{transform:scale(1);box-shadow:0 0 0 0 rgba(231,76,60,.4)}50%{transform:scale(1.05);box-shadow:0 0 0 15px rgba(231,76,60,0)}100%{transform:scale(1);box-shadow:0 0 0 0 rgba(231,76,60,0)}}h1{font-size:36px;font-weight:900;color:#2c3e50;margin-top:20px}.status{font-size:20px;color:#27ae60;font-weight:700;margin-top:10px;display:flex;align-items:center;justify-content:center;gap:8px}.status-dot{width:10px;height:10px;background:#27ae60;border-radius:50%;display:inline-block;animation:blink 1.4s ease-in-out infinite}@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}.subtitle{font-size:14px;color:#95a5a6;margin-top:6px}</style></head><body><img class="logo" src="${logoUrl}" alt="Nova Proxy Relay"><h1>نوا پروکسی</h1><div class="status"><span class="status-dot"></span>رله نوا فعال است</div><div class="subtitle">Nova Proxy Relay</div></body></html>`;
+	const logoUrl = 'https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/refs/heads/main/logo.svg';
+	return `<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Nova Proxy Relay</title><link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700;900&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Vazirmatn',sans-serif;background:#fff;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px}.logo{width:120px;height:120px;border-radius:50%;object-fit:cover;animation:pulse 2s ease-in-out infinite;box-shadow:0 0 0 0 rgba(231,76,60,.4)}@keyframes pulse{0%{transform:scale(1);box-shadow:0 0 0 0 rgba(231,76,60,.4)}50%{transform:scale(1.05);box-shadow:0 0 0 15px rgba(231,76,60,0)}100%{transform:scale(1);box-shadow:0 0 0 0 rgba(231,76,60,0)}}h1{font-size:36px;font-weight:900;color:#2c3e50;margin-top:20px}.status{font-size:20px;color:#27ae60;font-weight:700;margin-top:10px;display:flex;align-items:center;justify-content:center;gap:8px}.status-dot{width:10px;height:10px;background:#27ae60;border-radius:50%;display:inline-block;animation:blink 1.4s ease-in-out infinite}@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}.subtitle{font-size:14px;color:#95a5a6;margin-top:6px}</style></head><body><img class="logo" src="${logoUrl}" alt="Proxy Relay"><h1>ام دی فایو پروکسی</h1><div class="status"><span class="status-dot"></span>رله فعال است</div><div class="subtitle">Proxy Relay</div></body></html>`;
 }
 ///////////////////////////////////////////////////////Linked Panels & Auto-Update///////////////////////////////////////////////
 async function syncToLinkedPanels(env, config, ctx) {
@@ -2059,6 +2064,8 @@ async function computeHash(data) {
     return '';
   }
 }
+
+
 // ===== Main entry point =====
 export default {
 	async fetch(request, env, ctx) { try {
@@ -2191,9 +2198,9 @@ export default {
 					warpNoise: { mode: '', count: '', size: '', delay: '' },
 					linkedPanels: [], hubPanelUrl: '', syncApiKey: '',
 					autoUpdate: false, autoUpdateFormat: 'normal', autoUpdateInterval: 3600000, githubRepo: 'IRNova/Nova-Proxy',
-					telegramChannel: 'https://t.me/irnova_proxy',
+					telegramChannel: 'https://t.me/md5pro',
 					fakeConfigs: [
-						{ name: '📢 {telegram}', enabled: true, locked: true },
+						{ name: '📢 {telegram}', enabled: false, locked: true },
 						{ name: '📊 {usage}  |  📅 {expiry}', enabled: true }
 					],
 					subUserAgent: '', enableDirectConfigs: false, customRouting: '', metricNode: 'time.is'
@@ -2808,7 +2815,7 @@ export default {
 									})).filter(p => p.url && p.apiKey) : [],
 								hubPanelUrl: String(settings.hubPanelUrl || '').trim().slice(0, 200),
 								syncApiKey: String(settings.syncApiKey || '').trim().slice(0, 100),
-								telegramChannel: String(settings.telegramChannel || '').trim().slice(0, 200) || 'https://t.me/irnova_proxy',
+								telegramChannel: String(settings.telegramChannel || '').trim().slice(0, 200) || 'https://t.me/md5pro',
 								fakeConfigs: Array.isArray(settings.fakeConfigs) ? settings.fakeConfigs.map(f => ({
 									name: String(f.name || '').slice(0, 100),
 									enabled: typeof f.enabled === 'boolean' ? f.enabled : true,
@@ -3357,9 +3364,9 @@ export default {
 						backendMode: false, backendUrl: '',
 					linkedPanels: [], hubPanelUrl: '', syncApiKey: '',
 					autoUpdate: false, autoUpdateFormat: 'normal', autoUpdateInterval: 3600000, githubRepo: 'IRNova/Nova-Proxy',
-					telegramChannel: 'https://t.me/irnova_proxy',
+					telegramChannel: 'https://t.me/md5pro',
 					fakeConfigs: [
-						{ name: '📢 {telegram}', enabled: true, locked: true },
+						{ name: '📢 {telegram}', enabled: false, locked: true },
 						{ name: '📊 {usage}  |  📅 {expiry}', enabled: true }
 					],
 					subUserAgent: '', enableDirectConfigs: false, customRouting: '', metricNode: 'time.is'
@@ -3916,7 +3923,7 @@ export default {
 						try {
 							// نام پروفایل در کلاینت: اگر SUBNAME سفارشی باشد از آن استفاده می‌شود، در غیر این صورت نام پیش‌فرض فارسی
 							const _profileName = (config_JSON.muvcharMinuyMecholel.SUBNAME && config_JSON.muvcharMinuyMecholel.SUBNAME !== 'Nova Proxy')
-								? config_JSON.muvcharMinuyMecholel.SUBNAME : '🎁 سرویس رایگان نوا';
+								? config_JSON.muvcharMinuyMecholel.SUBNAME : 'سرویس md5 pro';
 							try { responseHeaders["Profile-Title"] = 'base64:' + btoa(unescape(encodeURIComponent(_profileName))); } catch (e) {}
 							if (!ua.includes('mozilla')) responseHeaders["Content-Disposition"] = `attachment; filename*=utf-8''${encodeURIComponent(_profileName)}`;
 						} catch (e) {}
@@ -4218,7 +4225,7 @@ log(`[Sub.NodeLimit] seed=${_perUserSeed || '(none)'} hasOwnCleanIp=${_hasOwnCle
 										: sugProtokol;
 
 								// Node remark: LOCKED Nova branding, NOT overridable by the panel, a template,
-									// or a reseller. Format = <flag> سرویس رایگان نوا <ip>:<port> [<PROTO>]. The custom
+									// or a reseller. Format = <flag> سرویس md5 pro <ip>:<port> [<PROTO>]. The custom
 									// NAMETPL and any prefix/suffix are intentionally ignored so the free-service brand
 									// can never be stripped or rebranded, and no extra text can be added before/after it.
 									{
@@ -4227,7 +4234,7 @@ log(`[Sub.NodeLimit] seed=${_perUserSeed || '(none)'} hasOwnCleanIp=${_hasOwnCle
 										const _rawRemark = String(match[3] || '').replace(/ ·S\d+$/, '').replace(/\$(socks5|http|https|turn|sstp):\/\/[^#\s]+/i, '').replace(/(?:^|\s)\$self\b/i, '').trim();
 										const _flagMatch = _rawRemark.match(/^(?:\uD83C[\uDDE6-\uDDFF]){2}/);
 										const _flag = _flagMatch ? _flagMatch[0] + ' ' : '';
-										hearatTzomet = `${_flag}سرویس رایگان نوا ${NOVA_TG_HANDLE} ${ktovetTzomet}:${portTzomet} [${_np.toUpperCase()}]${_chainMark}`;
+										hearatTzomet = `${_flag}سرویس md5 pro ${NOVA_TG_HANDLE} ${ktovetTzomet}:${portTzomet} [${_np.toUpperCase()}]${_chainMark}`;
 									}
 									if (_np === 'ss' && !keGenNivchar) {
 									if (!config_JSON.SS.TLS) {
@@ -9620,7 +9627,7 @@ async function keriatConfigJson(env, hostname, userID, UA = "Mozilla/5.0", ipusT
 			},
 			SUB: null,
 			SUBNAME: "Nova" + "Proxy",
-			NAMETPL: "", // Node-name template; empty = default "سرویس رایگان نوا N". Tags: {N} {NAME} {FLAG} {COUNTRY} {CITY} {ISP} {HOST} {PORT} {WORKER} {DATE} {PROTO}
+			NAMETPL: "", // Node-name template; empty = default "سرویس md5 pro N". Tags: {N} {NAME} {FLAG} {COUNTRY} {CITY} {ISP} {HOST} {PORT} {WORKER} {DATE} {PROTO}
 			SUBUpdateTime: 3, // Subscription update interval (hours)
 			TOKEN: await MD5MD5(hostname + userID),
 		},
