@@ -2200,7 +2200,7 @@ export default {
 			return await handleOperaUpdate(request, env);
 		}
 
-		if (nativGisha === 'opera/get_users') {
+		if (nativGisha === 'opera/get_users' || nativGisha === 'opera/getusers') {
 		    return await handleOperaGetUsers(env, ctx, request);
 		}
 
