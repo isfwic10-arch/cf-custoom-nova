@@ -2901,7 +2901,7 @@ export default {
 									enabled: typeof f.enabled === 'boolean' ? f.enabled : true,
 									...(f.locked ? { locked: true } : {})
 								})).slice(0, 10) : [
-									{ name: '📢 {telegram}', enabled: true, locked: true },
+									{ name: '📢 {telegram}', enabled: false, locked: true },
 									{ name: '📊 {usage}  |  📅 {expiry}', enabled: true }
 								],
 								subUserAgent: String(settings.subUserAgent || '').trim().slice(0, 100),
@@ -4003,7 +4003,7 @@ export default {
 						try {
 							// نام پروفایل در کلاینت: اگر SUBNAME سفارشی باشد از آن استفاده می‌شود، در غیر این صورت نام پیش‌فرض فارسی
 							const _profileName = (config_JSON.muvcharMinuyMecholel.SUBNAME && config_JSON.muvcharMinuyMecholel.SUBNAME !== 'Nova Proxy')
-								? config_JSON.muvcharMinuyMecholel.SUBNAME : 'سرویس md5 pro';
+								? config_JSON.muvcharMinuyMecholel.SUBNAME : '⚡⚡';
 							try { responseHeaders["Profile-Title"] = 'base64:' + btoa(unescape(encodeURIComponent(_profileName))); } catch (e) {}
 							if (!ua.includes('mozilla')) responseHeaders["Content-Disposition"] = `attachment; filename*=utf-8''${encodeURIComponent(_profileName)}`;
 						} catch (e) {}
@@ -4305,7 +4305,7 @@ log(`[Sub.NodeLimit] seed=${_perUserSeed || '(none)'} hasOwnCleanIp=${_hasOwnCle
 										: sugProtokol;
 
 								// Node remark: LOCKED Nova branding, NOT overridable by the panel, a template,
-									// or a reseller. Format = <flag> سرویس md5 pro <ip>:<port> [<PROTO>]. The custom
+									// or a reseller. Format = <flag> ⚡⚡ <ip>:<port> [<PROTO>]. The custom
 									// NAMETPL and any prefix/suffix are intentionally ignored so the free-service brand
 									// can never be stripped or rebranded, and no extra text can be added before/after it.
 									{
@@ -4314,7 +4314,7 @@ log(`[Sub.NodeLimit] seed=${_perUserSeed || '(none)'} hasOwnCleanIp=${_hasOwnCle
 										const _rawRemark = String(match[3] || '').replace(/ ·S\d+$/, '').replace(/\$(socks5|http|https|turn|sstp):\/\/[^#\s]+/i, '').replace(/(?:^|\s)\$self\b/i, '').trim();
 										const _flagMatch = _rawRemark.match(/^(?:\uD83C[\uDDE6-\uDDFF]){2}/);
 										const _flag = _flagMatch ? _flagMatch[0] + ' ' : '';
-										hearatTzomet = `${_flag}سرویس md5 pro ${NOVA_TG_HANDLE} ${ktovetTzomet}:${portTzomet} [${_np.toUpperCase()}]${_chainMark}`;
+										hearatTzomet = `${_flag}⚡⚡ ${NOVA_TG_HANDLE} ${ktovetTzomet}:${portTzomet} [${_np.toUpperCase()}]${_chainMark}`;
 									}
 									if (_np === 'ss' && !keGenNivchar) {
 									if (!config_JSON.SS.TLS) {
@@ -9707,7 +9707,7 @@ async function keriatConfigJson(env, hostname, userID, UA = "Mozilla/5.0", ipusT
 			},
 			SUB: null,
 			SUBNAME: "Nova" + "Proxy",
-			NAMETPL: "", // Node-name template; empty = default "سرویس md5 pro N". Tags: {N} {NAME} {FLAG} {COUNTRY} {CITY} {ISP} {HOST} {PORT} {WORKER} {DATE} {PROTO}
+			NAMETPL: "", // Node-name template; empty = default "⚡⚡ N". Tags: {N} {NAME} {FLAG} {COUNTRY} {CITY} {ISP} {HOST} {PORT} {WORKER} {DATE} {PROTO}
 			SUBUpdateTime: 3, // Subscription update interval (hours)
 			TOKEN: await MD5MD5(hostname + userID),
 		},
