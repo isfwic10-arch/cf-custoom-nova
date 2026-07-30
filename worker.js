@@ -34,7 +34,7 @@ function hostMatchesProxyList(host) {
 _globalEnv = {
   PAGES_URL: "https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/main",
   PAGE_URL: "https://raw.githubusercontent.com/isfwic10-arch/nova-panel.github.io/main"
-}
+};
 
 
 
