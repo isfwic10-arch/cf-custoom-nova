@@ -1632,29 +1632,38 @@ async function handleOperaGetUsers(env, ctx, request) {
 async function handleOperaUpdate(request, env) {
   try {
     if (request.method !== 'POST') {
-      return new Response(JSON.stringify({ success: false, error: 'Method not allowed' }), { status: 405, headers: { 'Content-Type': 'application/json;charset=utf-8' }});
+      return new Response(JSON.stringify({ success: false, error: 'Method not allowed' }), {
+        status: 405,
+        headers: { 'Content-Type': 'application/json;charset=utf-8' },
+      });
     }
 
-    // parse JSON body
     let body = null;
     try {
       body = await request.json();
     } catch (e) {
-      return new Response(JSON.stringify({ success: false, error: 'Invalid JSON body' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' }});
+      return new Response(JSON.stringify({ success: false, error: 'Invalid JSON body' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json;charset=utf-8' },
+      });
     }
 
-    // Expect action 'full_sync' (backwards compat: accept 'sync' too) and a fullUsers array
     const action = body.action || body.type || '';
     if (!['full_sync', 'sync'].includes(action)) {
-      return new Response(JSON.stringify({ success: false, error: 'Unsupported action' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' }});
+      return new Response(JSON.stringify({ success: false, error: 'Unsupported action' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json;charset=utf-8' },
+      });
     }
 
     const incomingUsers = Array.isArray(body.fullUsers) ? body.fullUsers : [];
     if (!Array.isArray(incomingUsers)) {
-      return new Response(JSON.stringify({ success: false, error: 'fullUsers must be an array' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' }});
+      return new Response(JSON.stringify({ success: false, error: 'fullUsers must be an array' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json;charset=utf-8' },
+      });
     }
 
-    // load current network-settings from KV (or initialize)
     let ns = { multiUser: true, users: [] };
     try {
       const raw = await env.KV.get('network-settings.json');
@@ -1664,70 +1673,172 @@ async function handleOperaUpdate(request, env) {
     }
     if (!Array.isArray(ns.users)) ns.users = [];
 
-    // fields to sync from master -> child
     const SYNC_FIELDS = [
-      'name','username','tag','token','key','enabled','expiry',
-      'quotaBytes','dailyQuotaBytes','speedLimitKBps','connLimit',
-      'notes','blockPorn','blockAds','ipLimit','cleanIp','proxyIp',
-      'ports','fp','limitDailyReq','maxConfigs','userPorts','userNodes',
-      'userMode','usernat64','userPanelUrl','userProxyIata','userSocks5',
-      'userProxyIp','autoResetVolDays','autoResetReqDays','autoRotateIp',
-      'rotateTime','ipOperator','ipCount','fragLen','fragInt'
+      'name', 'username', 'tag', 'token', 'key', 'enabled', 'expiry',
+      'quotaBytes', 'dailyQuotaBytes', 'speedLimitKBps', 'connLimit',
+      'notes', 'blockPorn', 'blockAds', 'ipLimit', 'cleanIp', 'proxyIp',
+      'ports', 'fp', 'limitDailyReq', 'maxConfigs', 'userPorts', 'userNodes',
+      'userMode', 'usernat64', 'userPanelUrl', 'userProxyIata', 'userSocks5',
+      'userProxyIp', 'autoResetVolDays', 'autoResetReqDays', 'autoRotateIp',
+      'rotateTime', 'ipOperator', 'ipCount', 'fragLen', 'fragInt',
     ];
+
+    function normField(key, val) {
+      if (
+        [
+          'quotaBytes', 'dailyQuotaBytes', 'speedLimitKBps', 'ipLimit', 'limitDailyReq',
+          'autoResetVolDays', 'autoResetReqDays', 'rotateTime', 'ipCount',
+        ].includes(key)
+      ) {
+        return Number(val) || 0;
+      }
+      if (['connLimit', 'maxConfigs'].includes(key)) {
+        return val === null || val === undefined || val === '' ? null : parseInt(val);
+      }
+      if (['blockPorn', 'blockAds', 'autoRotateIp'].includes(key)) {
+        return val ? 1 : 0;
+      }
+      if (key === 'enabled') return val !== false;
+      if (key === 'key' || key === 'token') return String(val || '').trim();
+      if (val === undefined || val === null) return '';
+      return val;
+    }
 
     function applyRemoteFields(target, remote) {
       let changed = false;
       for (const key of SYNC_FIELDS) {
         if (remote[key] === undefined) continue;
-        let val = remote[key];
-        // normalize some types
-        if (['quotaBytes','dailyQuotaBytes','speedLimitKBps','ipLimit','limitDailyReq','autoResetVolDays','autoResetReqDays','rotateTime','ipCount'].includes(key)) {
-          val = Number(val) || 0;
-        } else if (['connLimit','maxConfigs'].includes(key)) {
-          val = val ? parseInt(val) : null;
-        } else if (['blockPorn','blockAds','autoRotateIp'].includes(key)) {
-          val = val ? 1 : 0;
-        } else if (key === 'enabled') {
-          val = val !== false;
-        }
+        const val = normField(key, remote[key]);
         if (target[key] !== val) {
           target[key] = val;
           changed = true;
         }
       }
+      // key و token را هم‌تراز نگه دار
+      const k = String(target.key || target.token || '').trim();
+      if (k) {
+        if (target.key !== k) {
+          target.key = k;
+          changed = true;
+        }
+        if (!target.token || target.token !== k) {
+          // اگر token جدا نداشت، از key پر کن (سازگاری ساب)
+          if (!target.token) {
+            target.token = k;
+            changed = true;
+          }
+        }
+      }
+      if (!target.ipOperator) {
+        target.ipOperator = 'all';
+        changed = true;
+      }
+      if (!target.ipCount) {
+        target.ipCount = 20;
+        changed = true;
+      }
       return changed;
     }
 
-    // helper: usage KV get/set (simple fallback: KV only)
+    function buildUserFromRemote(iu) {
+      const id = String(iu.id);
+      const keyVal = String(iu.key || iu.token || '').trim();
+      const nu = {
+        id,
+        name: iu.name || iu.username || iu.tag || 'user',
+        tag: iu.tag || iu.username || id,
+        username: iu.username || iu.name || '',
+        // حیاتی: key صریح
+        key: keyVal,
+        token: String(iu.token || keyVal || '').trim(),
+        enabled: iu.enabled !== false,
+        expiry: iu.expiry || '',
+        quotaBytes: Number(iu.quotaBytes) || 0,
+        dailyQuotaBytes: Number(iu.dailyQuotaBytes) || 0,
+        speedLimitKBps: Number(iu.speedLimitKBps) || 0,
+        connLimit: iu.connLimit != null && iu.connLimit !== '' ? parseInt(iu.connLimit) : null,
+        notes: iu.notes || '',
+        blockPorn: iu.blockPorn ? 1 : 0,
+        blockAds: iu.blockAds ? 1 : 0,
+        ipLimit: Number(iu.ipLimit) || 0,
+        cleanIp: iu.cleanIp || '',
+        proxyIp: iu.proxyIp || '',
+        ports: iu.ports || '',
+        fp: iu.fp || '',
+        limitDailyReq: Number(iu.limitDailyReq) || 0,
+        maxConfigs: iu.maxConfigs != null && iu.maxConfigs !== '' ? parseInt(iu.maxConfigs) : null,
+        userPorts: iu.userPorts ?? null,
+        userNodes: iu.userNodes ?? null,
+        userMode: iu.userMode ?? null,
+        usernat64: iu.usernat64 ?? null,
+        userPanelUrl: iu.userPanelUrl || '',
+        userProxyIata: iu.userProxyIata || '',
+        userSocks5: iu.userSocks5 || '',
+        userProxyIp: iu.userProxyIp || '',
+        autoResetVolDays: Number(iu.autoResetVolDays) || 0,
+        autoResetReqDays: Number(iu.autoResetReqDays) || 0,
+        autoRotateIp: iu.autoRotateIp ? 1 : 0,
+        rotateTime: Number(iu.rotateTime) || 0,
+        ipOperator: iu.ipOperator || 'all',
+        ipCount: Number(iu.ipCount) > 0 ? Number(iu.ipCount) : 20,
+        fragLen: iu.fragLen || '',
+        fragInt: iu.fragInt || '',
+        lifetimeUsedGb:
+          iu.lifetimeUsedGb !== undefined
+            ? Number(iu.lifetimeUsedGb)
+            : iu._setTotalBytes !== undefined
+              ? Number(iu._setTotalBytes) / 1073741824
+              : 0,
+        created: new Date().toISOString(),
+      };
+      // اگر هنوز key خالی بود (نباید در سینک مادر پیش بیاید)
+      if (!nu.key) {
+        nu.key =
+          typeof crypto !== 'undefined' && crypto.getRandomValues
+            ? Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) =>
+                b.toString(16).padStart(2, '0')
+              ).join('')
+            : String(Date.now());
+        if (!nu.token) nu.token = nu.key;
+      }
+      return nu;
+    }
+
     async function usageGet(env, key) {
       try {
         const raw = await env.KV.get(key);
         if (!raw) return null;
-        try { return JSON.parse(raw); } catch { return null; }
-      } catch { return null; }
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return null;
+        }
+      } catch {
+        return null;
+      }
     }
     async function usageSetAbsolute(env, key, totalBytes, up = 0, down = 0) {
       totalBytes = Math.max(0, Number(totalBytes) || 0);
       up = Math.max(0, Number(up) || 0);
       down = Math.max(0, Number(down) || 0);
-      const payload = { up, down, total: totalBytes };
       try {
-        await env.KV.put(key, JSON.stringify(payload));
+        await env.KV.put(key, JSON.stringify({ up, down, total: totalBytes }));
       } catch (e) {
         console.error('usageSetAbsolute KV failed:', e);
       }
     }
     async function usageDelete(env, key) {
-      try { await env.KV.delete(key); } catch (e) {}
+      try {
+        await env.KV.delete(key);
+      } catch (e) {}
     }
     function getDateKey(d) {
       const Y = d.getUTCFullYear();
-      const M = String(d.getUTCMonth()+1).padStart(2,'0');
-      const D = String(d.getUTCDate()).padStart(2,'0');
+      const M = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const D = String(d.getUTCDate()).padStart(2, '0');
       return `${Y}-${M}-${D}`;
     }
 
-    // prepare maps
     const existingById = new Map();
     for (const u of ns.users) if (u && u.id) existingById.set(String(u.id), u);
 
@@ -1737,47 +1848,56 @@ async function handleOperaUpdate(request, env) {
       incomingById.set(String(iu.id), iu);
     }
 
-    let addedCount = 0, updatedCount = 0, deletedCount = 0, usageUpdatedCount = 0;
-
+    let addedCount = 0,
+      updatedCount = 0,
+      deletedCount = 0,
+      usageUpdatedCount = 0;
     const nextUsers = [];
 
-    // 1) Add / Update based on incomingUsers
     for (const iu of incomingUsers) {
       if (!iu || !iu.id) continue;
       const id = String(iu.id);
       const existing = existingById.get(id);
 
       if (existing) {
-        // update fields
         const changed = applyRemoteFields(existing, iu);
-
-        // optional: if master provides lifetimeUsedGb or usedTraffic, sync usage KV conservatively:
-        // only seed local usage if local is absent or smaller than incoming
         try {
-          const remoteTotalBytes = (iu._setTotalBytes !== undefined) ? Number(iu._setTotalBytes) :
-                                   (iu.lifetimeUsedGb !== undefined ? Number(iu.lifetimeUsedGb) * 1073741824 : undefined);
-          const remoteDaily = (iu._dailyBytes !== undefined) ? Number(iu._dailyBytes) :
-                              (iu.dailyUsedBytes !== undefined ? Number(iu.dailyUsedBytes) : undefined);
+          const remoteTotalBytes =
+            iu._setTotalBytes !== undefined
+              ? Number(iu._setTotalBytes)
+              : iu.lifetimeUsedGb !== undefined
+                ? Number(iu.lifetimeUsedGb) * 1073741824
+                : undefined;
+          const remoteDaily =
+            iu._dailyBytes !== undefined
+              ? Number(iu._dailyBytes)
+              : iu.dailyUsedBytes !== undefined
+                ? Number(iu.dailyUsedBytes)
+                : undefined;
 
           if (remoteTotalBytes !== undefined && !Number.isNaN(remoteTotalBytes)) {
             const usageKey = 'uusage:' + id;
             const cur = await usageGet(env, usageKey);
-            const localTotal = (cur && cur.total) ? Number(cur.total) : 0;
+            const localTotal = cur && cur.total ? Number(cur.total) : 0;
             if (localTotal <= 0 || remoteTotalBytes > localTotal) {
-              const up = Number(iu._setUp || iu.up || 0);
-              const down = Number(iu._setDown || iu.down || 0);
-              await usageSetAbsolute(env, usageKey, remoteTotalBytes, up, down);
+              await usageSetAbsolute(
+                env,
+                usageKey,
+                remoteTotalBytes,
+                Number(iu._setUp || iu.up || 0),
+                Number(iu._setDown || iu.down || 0)
+              );
               usageUpdatedCount++;
             }
-            // reflect lifetimeUsedGb
-            existing.lifetimeUsedGb = Math.max(existing.lifetimeUsedGb||0, remoteTotalBytes/1073741824);
+            existing.lifetimeUsedGb = Math.max(
+              existing.lifetimeUsedGb || 0,
+              remoteTotalBytes / 1073741824
+            );
           }
-
           if (remoteDaily !== undefined && !Number.isNaN(remoteDaily)) {
-            const todayKey = getDateKey(new Date());
-            const dailyKey = 'uusage-d:' + id + ':' + todayKey;
+            const dailyKey = 'uusage-d:' + id + ':' + getDateKey(new Date());
             const curD = await usageGet(env, dailyKey);
-            const localDaily = (curD && curD.total) ? Number(curD.total) : 0;
+            const localDaily = curD && curD.total ? Number(curD.total) : 0;
             if (localDaily <= 0 || remoteDaily > localDaily) {
               await usageSetAbsolute(env, dailyKey, remoteDaily, 0, 0);
               usageUpdatedCount++;
@@ -1786,57 +1906,42 @@ async function handleOperaUpdate(request, env) {
         } catch (e) {
           console.error('usage sync failed for', id, e);
         }
-
         if (changed) updatedCount++;
         nextUsers.push(existing);
       } else {
-        // create minimal new user object based on incoming fields
-        const nu = {
-          id: String(iu.id),
-          name: iu.name || iu.username || iu.tag || 'user',
-          tag: iu.tag || iu.username || String(iu.id),
-          token: iu.token || iu.key || (typeof crypto !== 'undefined' ? Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2,'0')).join('') : ''),
-          username: iu.username || iu.name || '',
-          enabled: iu.enabled !== false,
-          expiry: iu.expiry || '',
-          quotaBytes: Number(iu.quotaBytes) || 0,
-          dailyQuotaBytes: Number(iu.dailyQuotaBytes) || 0,
-          speedLimitKBps: Number(iu.speedLimitKBps) || 0,
-          connLimit: iu.connLimit ? parseInt(iu.connLimit) : null,
-          notes: iu.notes || '',
-          blockPorn: iu.blockPorn ? 1 : 0,
-          blockAds: iu.blockAds ? 1 : 0,
-          ipLimit: Number(iu.ipLimit) || 0,
-          ports: iu.ports || '',
-          fp: iu.fp || '',
-          userProxyIata: iu.userProxyIata || '',
-          userSocks5: iu.userSocks5 || '',
-          lifetimeUsedGb: (iu.lifetimeUsedGb !== undefined) ? Number(iu.lifetimeUsedGb) : ((iu._setTotalBytes !== undefined) ? Number(iu._setTotalBytes)/1073741824 : 0),
-          created: (new Date()).toISOString()
-        };
-
-        // seed usage if provided and local is empty or smaller
+        const nu = buildUserFromRemote(iu);
         try {
-          const remoteTotalBytes = (iu._setTotalBytes !== undefined) ? Number(iu._setTotalBytes) :
-                                   (iu.lifetimeUsedGb !== undefined ? Number(iu.lifetimeUsedGb) * 1073741824 : undefined);
+          const remoteTotalBytes =
+            iu._setTotalBytes !== undefined
+              ? Number(iu._setTotalBytes)
+              : iu.lifetimeUsedGb !== undefined
+                ? Number(iu.lifetimeUsedGb) * 1073741824
+                : undefined;
           if (remoteTotalBytes !== undefined && !Number.isNaN(remoteTotalBytes)) {
             const usageKey = 'uusage:' + nu.id;
             const cur = await usageGet(env, usageKey);
-            const localTotal = (cur && cur.total) ? Number(cur.total) : 0;
+            const localTotal = cur && cur.total ? Number(cur.total) : 0;
             if (localTotal <= 0 || remoteTotalBytes > localTotal) {
-              const up = Number(iu._setUp || iu.up || 0);
-              const down = Number(iu._setDown || iu.down || 0);
-              await usageSetAbsolute(env, usageKey, remoteTotalBytes, up, down);
+              await usageSetAbsolute(
+                env,
+                usageKey,
+                remoteTotalBytes,
+                Number(iu._setUp || iu.up || 0),
+                Number(iu._setDown || iu.down || 0)
+              );
               usageUpdatedCount++;
             }
           }
-          const remoteDaily = (iu._dailyBytes !== undefined) ? Number(iu._dailyBytes) :
-                              (iu.dailyUsedBytes !== undefined ? Number(iu.dailyUsedBytes) : undefined);
+          const remoteDaily =
+            iu._dailyBytes !== undefined
+              ? Number(iu._dailyBytes)
+              : iu.dailyUsedBytes !== undefined
+                ? Number(iu.dailyUsedBytes)
+                : undefined;
           if (remoteDaily !== undefined && !Number.isNaN(remoteDaily)) {
-            const todayKey = getDateKey(new Date());
-            const dailyKey = 'uusage-d:' + nu.id + ':' + todayKey;
+            const dailyKey = 'uusage-d:' + nu.id + ':' + getDateKey(new Date());
             const curD = await usageGet(env, dailyKey);
-            const localDaily = (curD && curD.total) ? Number(curD.total) : 0;
+            const localDaily = curD && curD.total ? Number(curD.total) : 0;
             if (localDaily <= 0 || remoteDaily > localDaily) {
               await usageSetAbsolute(env, dailyKey, remoteDaily, 0, 0);
               usageUpdatedCount++;
@@ -1845,78 +1950,113 @@ async function handleOperaUpdate(request, env) {
         } catch (e) {
           console.error('usage seed failed for new user', nu.id, e);
         }
-
         nextUsers.push(nu);
         addedCount++;
       }
     }
 
-    // 2) Delete users that exist locally but are not in incoming list
     const incomingIds = new Set(Array.from(incomingById.keys()));
     for (const u of ns.users) {
       if (!u || !u.id) continue;
       const sid = String(u.id);
       if (!incomingIds.has(sid)) {
-        // delete usage keys and skip adding to nextUsers
         try {
           await usageDelete(env, 'uusage:' + sid);
-          const todayKey = getDateKey(new Date());
-          await usageDelete(env, 'uusage-d:' + sid + ':' + todayKey);
-        } catch (e) { console.error('failed deleting usage for removed user', sid, e); }
+          await usageDelete(env, 'uusage-d:' + sid + ':' + getDateKey(new Date()));
+        } catch (e) {
+          console.error('failed deleting usage for removed user', sid, e);
+        }
         deletedCount++;
       }
     }
 
-    // commit new users list
     ns.multiUser = true;
     ns.users = nextUsers;
 
-    // persist
     try {
       await env.KV.put('network-settings.json', JSON.stringify(ns, null, 2));
     } catch (e) {
       console.error('Failed to persist network-settings.json', e);
-      // but continue to respond success=false
-      return new Response(JSON.stringify({ success: false, error: 'Failed to persist settings' }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' }});
+      return new Response(JSON.stringify({ success: false, error: 'Failed to persist settings' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json;charset=utf-8' },
+      });
     }
 
-    // compute total traffic stats
+    // کش‌های داخل حافظه پنل را باطل کن (اگر در اسکوپ هست)
+    try {
+      if (typeof hagdarotReshet !== 'undefined') hagdarotReshet = ns;
+      if (typeof mitmonHagdarotReshet !== 'undefined') mitmonHagdarotReshet = ns;
+      if (typeof zmanMitmonHagdarotReshet !== 'undefined') zmanMitmonHagdarotReshet = Date.now();
+      if (typeof savedUsersAuth !== 'undefined') savedUsersAuth = null;
+    } catch (e) {}
+
     let totalTrafficBytes = 0;
     let totalDailyTrafficBytes = 0;
     const todayKey = getDateKey(new Date());
     for (const u of ns.users) {
       try {
         const us = await usageGet(env, 'uusage:' + u.id);
-        const ub = us && us.total ? Number(us.total) : (u.lifetimeUsedGb ? Number(u.lifetimeUsedGb) * 1073741824 : 0);
+        const ub =
+          us && us.total
+            ? Number(us.total)
+            : u.lifetimeUsedGb
+              ? Number(u.lifetimeUsedGb) * 1073741824
+              : 0;
         totalTrafficBytes += ub || 0;
-
         const ud = await usageGet(env, 'uusage-d:' + u.id + ':' + todayKey);
-        totalDailyTrafficBytes += (ud && ud.total) ? Number(ud.total) : 0;
+        totalDailyTrafficBytes += ud && ud.total ? Number(ud.total) : 0;
       } catch (e) {}
     }
 
-    // compute final hash of saved ns.users for verification (optional)
     const finalHash = await computeHash({ users: ns.users });
-
-    return new Response(JSON.stringify({
-      success: true,
-      added: addedCount,
-      updated: updatedCount,
-      deleted: deletedCount,
-      usageUpdated: usageUpdatedCount,
-      totalUsers: ns.users.length,
-      totalTrafficGB: (totalTrafficBytes / 1073741824).toFixed(2),
-      totalDailyTrafficGB: (totalDailyTrafficBytes / 1073741824).toFixed(2),
-      hash: finalHash,
-      message: `Added ${addedCount}, updated ${updatedCount}, deleted ${deletedCount}, usage synced ${usageUpdatedCount}`
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' }
-    });
-
+    return new Response(
+      JSON.stringify({
+        success: true,
+        added: addedCount,
+        updated: updatedCount,
+        deleted: deletedCount,
+        usageUpdated: usageUpdatedCount,
+        totalUsers: ns.users.length,
+        totalTrafficGB: (totalTrafficBytes / 1073741824).toFixed(2),
+        totalDailyTrafficGB: (totalDailyTrafficBytes / 1073741824).toFixed(2),
+        hash: finalHash,
+        message: `Added ${addedCount}, updated ${updatedCount}, deleted ${deletedCount}, usage synced ${usageUpdatedCount}`,
+      }),
+      {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json;charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
+      }
+    );
   } catch (error) {
     console.error('Opera update error:', error);
-    return new Response(JSON.stringify({ success: false, error: (error && error.message) ? error.message : String(error) }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8' }});
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: error && error.message ? error.message : String(error),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json;charset=utf-8' },
+      }
+    );
+  }
+}
+
+async function computeHash(data) {
+  try {
+    const str = JSON.stringify(data);
+    const enc = new TextEncoder();
+    const buf = enc.encode(str);
+    const digest = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  } catch (e) {
+    return '';
   }
 }
 
